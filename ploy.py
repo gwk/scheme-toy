@@ -24,6 +24,11 @@ options = { '-trace' }
 trace_enabled = False
 
 
+def error(*items):
+  print(*items, file=sys.stderr)
+  sys.exit(1)
+
+
 class Symbol:
 
   def __init__(self, name):
@@ -96,9 +101,13 @@ tokens_re = re.compile(r'''(
 
 
 def gen_tokens(source_text):  
-  parts = tokens_re.split(source_text)[1::2]
+  parts = tokens_re.split(source_text)
   #pprint(parts, indent=2)
-  for part in parts:
+  for i, part in enumerate(parts):
+    if i % 2 == 0:
+      if part and not part.isspace():
+        error('Invalid token separator:', part)
+      continue
     if part.startswith(';'): # comment
       continue
     if part == '(':
@@ -126,7 +135,7 @@ def gen_tokens(source_text):
       elif part[1] == 'f':
         yield (T_atom, False)
       else:
-        raise Exception('Invalid token: ' + part)
+        error('Invalid token: ', part)
     else:
       yield (T_sym, Symbol(part))
 
@@ -236,7 +245,7 @@ def call_cc(cont, args):
     return (cont, arg)
   return func(cont, (cont_func, None))
 
-  
+
 # environment for py-exec and py-eval
 py_env = {}
 
@@ -265,11 +274,23 @@ add_native_fn('<', lambda a, b: a < b)
 add_native_fn('>', lambda a, b: a > b)
 add_native_fn('<=', lambda a, b: a <= b)
 add_native_fn('>=', lambda a, b: a >= b)
-add_native_fn('=', lambda a, b: a == b)
+add_native_fn('eq?', lambda a, b: a == b)
 add_native_fn('cons' , lambda a, b: [a, b])
 add_native_fn('car'  , lambda a_b: a_b[0])
 add_native_fn('cdr'  , lambda a_b: a_b[1])
 add_native_fn('display', print)
+
+# for now define test as a  builtin function; should be a macro
+def test(a, b):
+  if a == b:
+    print(a)
+  else:
+    print('test failed:')
+    print(' ', a)
+    print(' ', b)
+    sys.exit(1)
+  
+add_native_fn('test', test)
 
 global_env.vars = builtins
 
