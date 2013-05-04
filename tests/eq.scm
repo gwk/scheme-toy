@@ -1,6 +1,6 @@
 (test (eq? 'a 3) #f)
 (test (eq? #t 't) #f)
-(test (eq? "abs" 'abc) #f)
+(test (eq? "abc" 'abc) #f)
 (test (eq? "hi" '(hi)) #f)
 (test (eq? "()" '()) #f)
 (test (eq? #\a #\b) #f)
