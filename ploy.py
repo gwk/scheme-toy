@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 '''
-Interpreter for a subset of scheme.
+Interpreter for a Scheme-like language.
 Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html
 '''
 
@@ -27,6 +27,25 @@ trace_enabled = False
 def error(*items):
   print(*items, file=sys.stderr)
   sys.exit(1)
+
+
+class PloyError(Exception):
+
+  def __init__(self, *items):
+    self.message = ' '.join(str(i) for i in items)
+    super().__init__(self, self.message)
+
+
+class TokenError(PloyError):
+  pass
+
+
+class ParseError(PloyError):
+  pass
+
+
+class EnvError(PloyError):
+  pass
 
 
 class Symbol:
@@ -68,7 +87,7 @@ class Env:
     elif self.parent != None:
       return self.parent.get(var_name)
     else:
-      raise KeyError('Unknown variable ' + var_name)
+      raise EnvError('get unknown variable:', var_name)
 
   def set(self, var_name, value):
     if var_name in self.vars:
@@ -76,7 +95,7 @@ class Env:
     elif self.parent != None:
       return self.parent.set(var_name, value)
     else:
-      raise Key('Unknown variable ' + var_name)
+      raise EnvError('set unknown variable:', var_name)
 
   def define(self, var_name, value):
     self.vars[var_name] = value
@@ -106,7 +125,7 @@ def gen_tokens(source_text):
   for i, part in enumerate(parts):
     if i % 2 == 0:
       if part and not part.isspace():
-        error('Invalid token separator:', part)
+        raise TokenError('Invalid token separator:', repr(part))
       continue
     if part.startswith(';'): # comment
       continue
@@ -135,7 +154,7 @@ def gen_tokens(source_text):
       elif part[1] == 'f':
         yield (T_atom, False)
       else:
-        error('Invalid token: ', part)
+        raise TokenError('Invalid token:', repr(part))
     else:
       yield (T_sym, Symbol(part))
 
@@ -152,46 +171,40 @@ S_lambda, S_if, S_begin, S_set, S_define, S_load, S_quote \
 = (Symbol(s) for s in ('lambda', 'if', 'begin', 'set!', 'define', 'load', 'quote'))
 
 
-def process_sexpr(token_stream):
+def sexpr(token_stream):
+  'parse an s-expression from a token stream.'
   token_type, value = next(token_stream)
   if token_type == T_sq:
-    return [S_quote, [process_sexpr(token_stream), None]]
+    return [S_quote, [sexpr(token_stream), None]]
   elif token_type == T_op:
     cons = [None, None]
     lst = cons
-    token = None
+    sub_value = None
     while True:
-      token = process_sexpr(token_stream)
-      if token not in [')', '.']:
-        cons[1] = [token, None]
+      sub_value = sexpr(token_stream)
+      if sub_value not in [')', '.']:
+        cons[1] = [sub_value, None]
         cons = cons[1]
       else:
         break
-    if token == '.':
-      cons[1] = process_sexpr(token_stream)
-      token_type, token = next(token_stream)
-    if token == ')':
+    if sub_value == '.':
+      cons[1] = sexpr(token_stream)
+      token_type, sub_value = next(token_stream)
+    if sub_value == ')':
       return lst[1]
     else:
-      raise Exception('expected closing parenthesis for expression ' + str(lst) + token)
+      raise ParseError('Expected closing parenthesis for expression:', lst, sub_value)
   else:
     return value
 
 
-def sexpr(source_text):
-  'parse a single s-expression from the source text.'
-  token_stream = iter(tokenize(source_text))
-  return process_sexpr(token_stream)
-
-
-def sexprs(source_text):
-  'parse a sequence of s-expressions from the source text into a list.'
+def sexprs(token_stream):
+  'parse a sequence of s-expressions from a token stream.'
   lst = [None, None]
   cur = lst
-  token_stream = iter(tokenize(source_text))
   try:
     while True:
-      cur[1] = [process_sexpr(token_stream), None]
+      cur[1] = [sexpr(token_stream), None]
       cur = cur[1]
   except StopIteration:
     pass
@@ -251,8 +264,8 @@ py_env = {}
 
 global_env = Env(None)
 
-builtins = {
-  'eval'    : create_eval_fn(global_env), # creates a weird cycle global_env and builtins
+global_env.vars = {
+  'eval'    : create_eval_fn(global_env), # note the reference cycle
   'py-exec' : py_exec,
   'py-eval' : py_eval,
   'call/cc' : call_cc,
@@ -264,7 +277,7 @@ def add_native_fn(name, py_fn):
   'wrapper used to give builtin functions names for error clarity.'
   f = native_fn(py_fn)
   f.__qualname__ = 'native:' + name
-  builtins[name] = f
+  global_env.vars[name] = f
 
 
 add_native_fn('+', lambda *args: sum(args))
@@ -275,9 +288,9 @@ add_native_fn('>', lambda a, b: a > b)
 add_native_fn('<=', lambda a, b: a <= b)
 add_native_fn('>=', lambda a, b: a >= b)
 add_native_fn('eq?', lambda a, b: a == b)
-add_native_fn('cons' , lambda a, b: [a, b])
-add_native_fn('car'  , lambda a_b: a_b[0])
-add_native_fn('cdr'  , lambda a_b: a_b[1])
+add_native_fn('cons', lambda a, b: [a, b])
+add_native_fn('car', lambda a_b: a_b[0])
+add_native_fn('cdr', lambda a_b: a_b[1])
 add_native_fn('display', print)
 
 # for now define test as a  builtin function; should be a macro
@@ -291,8 +304,6 @@ def test(a, b):
     sys.exit(1)
   
 add_native_fn('test', test)
-
-global_env.vars = builtins
 
 
 # continuations
@@ -377,26 +388,89 @@ class Cont_list_param:
     return (self.cont, None)
 
 
-class Cont_rep:
-  def __init__(self, env, reader):
-    self.env = env
-    self.reader = reader
-  def run(self, value):
-    if value:
-      print(rep_val_sym, value)
-    cont = Cont_rep(self.env, self.reader) # next top-level continuation
-    try:
-      source_text = next(self.reader)
-    except EOFError:
-      print()
-      return None, None # terminate
-    except KeyboardInterrupt:
-      print()
-      return cont, None # reset to top level
-    return eval_str(cont, self.env, source_text)
+
+# evaluation helpers
 
 
-# evaluation
+def sub_eval_expr_list(cont, env, exprs):
+  return (Cont_expr_list(cont, env, exprs), None)
+  
+
+def sub_eval_tokens(cont, env, tokens):
+  stream = iter(tokens)
+  exprs = sexprs(stream)
+  return sub_eval_expr_list(cont, env, exprs)
+
+
+def sub_eval_load_from_path(cont, env, path):
+  with open(path) as f:
+    source_text = f.read()
+  tokens = tokenize(source_text)
+  return sub_eval_tokens(cont, env, tokens)
+
+
+# evaluation methods
+
+
+def eval_set(cont, env, code):
+  set_sym, (var_name, (expr, nil)) = code
+  cont = Cont_set(cont, env, str(var_name))
+  return eval_(cont, env, expr)
+
+
+def eval_quote(cont, env, code):
+  quote_sym, (item, nil) = code
+  return (cont, item)
+
+
+def eval_begin(cont, env, code):
+  begin_sym, exprs = code
+  return sub_eval_expr_list(cont, env, exprs)
+
+
+def eval_lambda(cont, parent_env, code):
+  lambda_sym, (params, exprs) = code
+  def func(cont, args):
+    new_env = Env(parent_env, params, args)
+    return sub_eval_expr_list(cont, new_env, exprs)
+  return (cont, func)
+
+
+def eval_if(cont, env, code):
+  if_sym, (predicate, (then_code, rest)) = code
+  else_code = rest[0] if rest else None
+  return eval_(Cont_if(cont, env, then_code, else_code), env, predicate)
+
+
+def eval_define(cont, env, code):
+  define_sym, (var_name, (expr, nil)) = code
+  cont = Cont_define(cont, env, str(var_name))
+  return eval_(cont, env, expr)
+  
+
+def eval_load(cont, env, code):
+  load_sym, (path, nil) = code
+  return sub_eval_load_from_path(cont, env, path)
+  
+
+def make_param_conts(cont, prev, env, code):
+  assert isinstance(code, list)
+  expr, rest = code
+  cont_param = Cont_param(cont, prev)
+  cont = Cont_eval(cont_param, env, expr)
+  if rest == None:
+    return cont
+  else:
+    return make_param_conts(cont, cont_param, env, rest)
+    
+  
+def eval_apply(cont, env, code):
+  operator, exprs = code
+  apply_cont = Cont_apply(cont)
+  eval_cont = Cont_eval(apply_cont, env, operator)
+  cont = make_param_conts(eval_cont, apply_cont, env, exprs)
+  return (cont, None)
+
 
 
 def eval_(cont, env,  code):
@@ -423,113 +497,12 @@ def eval_(cont, env,  code):
     return (cont, code)
 
 
-def eval_str(cont, env, source_text):
-  code = sexpr(source_text)
-  return eval_(cont, env, code)
 
-
-def eval_set(cont, env, code):
-  set_sym, (var_name, (expr, nil)) = code
-  cont = Cont_set(cont, env, str(var_name))
-  return eval_(cont, env, expr)
-
-
-def eval_expr_list(cont, env, exprs):
-  return (Cont_expr_list(cont, env, exprs), None)
-  
-
-def eval_quote(cont, env, code):
-  quote_sym, (item, nil) = code
-  return (cont, item)
-
-
-def eval_begin(cont, env, code):
-  begin_sym, exprs = code
-  return eval_expr_list(cont, env, exprs)
-
-
-def eval_lambda(cont, parent_env, code):
-  lambda_sym, (params, exprs) = code
-  def func(cont, args):
-    new_env = Env(parent_env, params, args)
-    return eval_expr_list(cont, new_env, exprs)
-  return (cont, func)
-
-
-def eval_if(cont, env, code):
-  if_sym, (predicate, (then_code, rest)) = code
-  else_code = rest[0] if rest else None
-  return eval_(Cont_if(cont, env, then_code, else_code), env, predicate)
-
-
-def eval_define(cont, env, code):
-  define_sym, (var_name, (expr, nil)) = code
-  cont = Cont_define(cont, env, str(var_name))
-  return eval_(cont, env, expr)
-  
-
-
-def make_param_conts(cont, prev, env, code):
-  assert isinstance(code, list)
-  expr, rest = code
-  cont_param = Cont_param(cont, prev)
-  cont = Cont_eval(cont_param, env, expr)
-  if rest == None:
-    return cont
-  else:
-    return make_param_conts(cont, cont_param, env, rest)
-    
-  
-def eval_apply(cont, env, code):
-  operator, exprs = code
-  apply_cont = Cont_apply(cont)
-  eval_cont = Cont_eval(apply_cont, env, operator)
-  cont = make_param_conts(eval_cont, apply_cont, env, exprs)
-  return (cont, None)
-
-
-def eval_load(cont, env, code):
-  load_sym, (path, nil) = code
-  return load_source_from_path(path)
-  
-
-def load_source_from_path(cont, env, path):
-  with open(path) as f:
-    source_text = f.read()
-  exprs = sexprs(source_text)
-  return eval_expr_list(cont, env, exprs)
-  
-
-# read eval loop
-
-def expression_reader(fi):
-  '''
-  TODO:
-  count T_op and T_cp tokens, not parenthesis chars.
-  '''
-  code = ''
-  brackets = 0
-  while True:
-    prompt = rep_continue_prompt if code else rep_prompt
-    ln = input(prompt)
-    code += ln + ' '
-    brackets += ln.count('(') -  ln.count(')')
-    if brackets == 0 and len(ln.strip()) != 0:
-      yield code
-      code = ''
-
-
-def rep_loop(fi):
-  '''
-  read-eval-print loop for interactive session.
-  '''
-  reader = expression_reader(fi)
-  cont = Cont_rep(global_env, reader)
-  eval_loop(cont)
+# continuation eval loop
 
 
 def eval_loop(cont):
-  'eval trampoline loops over the current continuation, running it and thereby stepping through the computation.'
+  'trampoline loop over the current continuation; each iteration runs a step of the computation.'
   value = None
   while cont:
     if trace_enabled:
@@ -540,6 +513,63 @@ def eval_loop(cont):
   return value
 
 
+# read eval loop
+
+
+def token_level(t):
+  if t == T_op:
+    return 1
+  if t == T_cp:
+    return -1
+  return 0
+
+
+def read_input():
+  tokens = []
+  level = 0
+  while not tokens or level > 0:
+    prompt = rep_continue_prompt if tokens else rep_prompt
+    line = input(prompt)
+    line_tokens = tokenize(line)
+    for t, v in line_tokens: # unpack tokens into type and value
+      level += token_level(t)
+    tokens.extend(line_tokens)
+  # check for excessive tokens
+  if level < 0:
+    l = 0
+    culprits = []
+    for i, (t, v) in enumerate(tokens):
+      l += token_level(t)
+      if l < 0:
+        culprits = [v for t, v in tokens[i:i + 16]]
+        break
+    raise ParseError('unexpected tokens:', *culprits)
+  return tokens
+
+
+def rep_loop():
+  '''
+  read-eval-print loop for interactive session.
+  '''
+  while True:
+    try:
+      tokens = read_input()
+      cont, value_ignored = sub_eval_tokens(None, global_env, tokens)
+      value = eval_loop(cont)
+      if value is not None:
+        print(rep_val_sym, value)
+    except EOFError: # exit the REPL
+      print()
+      break
+    # other errors return to top level of REPL
+    except KeyboardInterrupt:
+      print(' Interrupt')
+      continue
+    except PloyError as e:
+      print()
+      print(e.message)
+      continue
+
 
 if __name__ == '__main__':
   args = sys.argv[1:]
@@ -547,8 +577,8 @@ if __name__ == '__main__':
   paths = [a for a in args if a not in options]
 
   for path in paths:
-    cont, value = load_source_from_path(None, global_env, path)
+    cont, value = sub_eval_load_from_path(None, global_env, path)
     eval_loop(cont)
 
   if not args:
-    rep_loop(sys.stdin)
+    rep_loop()
