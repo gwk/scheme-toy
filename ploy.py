@@ -115,7 +115,7 @@ tokens_re = re.compile(r'''(
 | \)          # cp: close parenthesis
 | "(?:[^"]|\\")+" # atom: string literal
 | \#(?:[tf]|\\(?:.|newline|space)) # atom: true, false, char
-| [\w+\-*/<>=!?]+ # sym
+| [\w+\-*/<>=!?]+ # sym or number
 )''', flags=re.VERBOSE)
 
 
@@ -130,33 +130,35 @@ def gen_tokens(source_text):
     if part.startswith(';'): # comment
       continue
     if part == '(':
-      yield (T_op, part)
-    elif part == ')':
-      yield (T_cp, part)
-    elif part == '.':
-      yield (T_dot, part)
-    elif part == "'":
-      yield (T_sq, part)
-    elif part.isdigit():
-      yield (T_atom, int(part))
-    elif part[0] == '"':
-      yield (T_atom, part[1:-1].replace(r'\\', '\\').replace(r'\"', r'"'))
-    elif part[0] == '#':
+      yield (T_op, part); continue
+    if part == ')':
+      yield (T_cp, part); continue
+    if part == '.':
+      yield (T_dot, part); continue
+    if part == "'":
+      yield (T_sq, part); continue
+    try:
+      i = int(part)
+      yield (T_atom, i); continue
+    except ValueError:
+      pass
+    if part[0] == '"':
+      yield (T_atom, part[1:-1].replace(r'\\', '\\').replace(r'\"', r'"')); continue
+    if part[0] == '#':
       if part[1] == '\\':
         char = part[2:]
         if char == 'space':
           char = ' '
         if char == 'newline':
           char = '\n'
-        yield (T_atom, char)
-      elif part[1] == 't':
-        yield (T_atom, True)
-      elif part[1] == 'f':
-        yield (T_atom, False)
-      else:
-        raise TokenError('Invalid token:', repr(part))
-    else:
-      yield (T_sym, Symbol(part))
+        yield (T_atom, char); continue
+      if part[1] == 't':
+        yield (T_atom, True); continue
+      if part[1] == 'f':
+        yield (T_atom, False); continue
+      raise TokenError('Invalid token:', repr(part))
+    # else symbol
+    yield (T_sym, Symbol(part))
 
 
 def tokenize(source_text):
