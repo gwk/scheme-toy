@@ -19,9 +19,20 @@ trace_sym = white_bullet = '◦'
 cont_sym = white_down_pointing_small_triangle = '▿'
 rep_val_sym = white_circle = '○'
 
-options = { '-trace' }
+known_flags = { '-trace' }
 
 trace_enabled = False
+
+
+def chain_from_iterable(iterable):
+  'create a chain from an iterable (currently unused).'
+  anchor = [None, None] # chain to be returned is the tail of anchor
+  current = anchor
+  for i in iterable:
+    c = [i, None]
+    current[1] = c
+    current = c
+  return anchor[1]
 
 
 def error(*items):
@@ -100,7 +111,6 @@ class Env:
   def define(self, var_name, value):
     self.vars[var_name] = value
     
-
 
 # tokenizer
 
@@ -308,87 +318,90 @@ def test(a, b):
 add_native_fn('test', test)
 
 
-# continuations
+# continuation constructors
 
 
-class Cont_eval:
+def Cont_eval(cont, env, expr):
   'continuation for the evaluation of an expression.'
-  def __init__(self, cont, env, expr):
-    self.cont = cont
-    self.env = env
-    self.expr = expr
-  def run(self, val_ignored):
-    return eval_(self.cont, self.env, self.expr)
+  def cont_eval(value_ignored):
+    'value is ignored because result of eval call depends only on the environment passed in.'
+    return eval_(cont, env, expr)
+  return cont_eval
 
 
-class Cont_expr_list:
-  def __init__(self, cont, env, exprs):
-    expr, rest = exprs
-    self.cont = Cont_expr_list(cont, env, rest) if rest else cont
-    self.env = env
-    self.expr = expr
-  def run(self, val_ignored):
-    return eval_(self.cont, self.env, self.expr)
+def Cont_define(cont, env, var_name):
+  def cont_define(value):
+    env.define(var_name, value)
+    return cont, None
+  return cont_define
 
 
-class Cont_define:
-  def __init__(self, cont, env, var_name):
-    self.cont = cont
-    self.env = env
-    self.var_name = var_name
-  def run(self, value):
-    self.env.define(self.var_name, value)
-    return self.cont, None
+def Cont_set(cont, env, var_name):
+  def cont_set(value):
+    env.set(var_name, value)
+    return cont, None
+  return cont_set
 
 
-class Cont_set:
-  def __init__(self, cont, env, var_name):
-    self.cont = cont
-    self.env = env
-    self.var_name = var_name
-  def run(self, value):
-    self.env.set(self.var_name, value)
-    return self.cont, None
+def Cont_if(cont, env, then_code, else_code):
+  def cont_if(value):
+    return eval_(cont, env, then_code if value else else_code)
+  return cont_if
 
 
-class Cont_if:
-  def __init__(self, cont, env, then_code, else_code):
-    self.cont = cont
-    self.env = env
-    self.then_code = then_code
-    self.else_code = else_code
-  def run(self, value):
-    if value:
-      return eval_(self.cont, self.env, self.then_code)
-    else:
-      return eval_(self.cont, self.env, self.else_code)
+def Cont_apply(cont):
+  def cont_apply(value):
+    '''
+    value is the evaluated operator and args list.
+    '''
+    operator, args = value
+    return operator(cont, args)
+  return cont_apply
 
 
-class Cont_apply:
-  def __init__(self, cont):
-    self.cont = cont
-  def run(self, value_fn):
-    return value_fn(self.cont, self.params)
+def Cont_expr_list(cont, env, exprs):
+  'continuation for the evaluation of an expression list (function bodies, begin).'
+  expr, rest = exprs
+  # recursively create continuations for the remainder of the expr list evaluation.
+  next_cont = Cont_expr_list(cont, env, rest) if rest else cont
+  def cont_expr_list(value_ignored):
+    '''
+    value is ignored because each expr in the list does not receive the value of the previous expr.
+    the final value will be passed out of the expression list to cont.
+    '''
+    return eval_(next_cont, env, expr)
+  return cont_expr_list
 
 
-class Cont_param:
-  def __init__(self, cont, prev):
-    self.cont = cont
-    self.prev = prev
-    self.params = None
-  def run(self, value):
-    self.prev.params = (value, self.params)
-    return (self.cont, None)
+def Cont_arg(cont, env, args, val_list):
+  '''
+  continuation for the evaluation of a function argument.
+  val_list is a python list that accumulates the argument values.
+  '''
+  expr, rest = args
+  # recursively create continuations for the remainder of the arg list evaluation.
+  next_cont = Cont_arg(cont, env, rest, val_list) if rest else cont
+  def cont_arg(value):
+    '''
+    value is the result of the previous argument evaluation.
+    append this value to val_list and then eval the current arg.
+    note that for the first element (the operator position), the previous value is arbitary and will be ignored later.
+    '''
+    val_list.append(value)
+    return eval_(next_cont, env, expr)
+  return cont_arg
 
 
-class Cont_list_param:
-  def __init__(self, cont, prev):
-    self.cont = cont
-    self.prev = prev
-  def run(self, value):
-    self.prev.params = value
-    return (self.cont, None)
-
+def Cont_arg_list(cont, env, exprs):
+  'continuation for the evaluation of function arguments.'
+  val_list = [] # argument values accumulate here
+  def cont_arg_list_finish(value):
+    'append the last arg value and return the val list as a chain; ignore the initial garbage that preceded the first cont_arg.'
+    val_list.append(value)
+    chain = chain_from_iterable(val_list[1:])
+    return cont, chain
+  # recursively create continuations to eval each arg
+  return Cont_arg(cont_arg_list_finish, env, exprs, val_list)
 
 
 # evaluation helpers
@@ -455,27 +468,13 @@ def eval_load(cont, env, code):
   return sub_eval_load_from_path(cont, env, path)
   
 
-def make_param_conts(cont, prev, env, code):
-  assert isinstance(code, list)
-  expr, rest = code
-  cont_param = Cont_param(cont, prev)
-  cont = Cont_eval(cont_param, env, expr)
-  if rest == None:
-    return cont
-  else:
-    return make_param_conts(cont, cont_param, env, rest)
-    
-  
 def eval_apply(cont, env, code):
-  operator, exprs = code
-  apply_cont = Cont_apply(cont)
-  eval_cont = Cont_eval(apply_cont, env, operator)
-  cont = make_param_conts(eval_cont, apply_cont, env, exprs)
-  return (cont, None)
+  cont_apply = Cont_apply(cont)
+  cont_args = Cont_arg_list(cont_apply, env, code)
+  return (cont_args, None)
 
 
-
-def eval_(cont, env,  code):
+def eval_(cont, env, code):
   if isinstance(code, list):
     if code[0] == S_lambda:
       return eval_lambda(cont, env,  code)
@@ -495,21 +494,23 @@ def eval_(cont, env,  code):
       return eval_apply(cont, env, code)
   elif isinstance(code, Symbol):
     return (cont, env.get(str(code)))
-  else: # atom evaluates to self
+  else: # atoms evaluates to themselves
     return (cont, code)
-
 
 
 # continuation eval loop
 
 
 def eval_loop(cont):
-  'trampoline loop over the current continuation; each iteration runs a step of the computation.'
+  '''
+  the core of the interpreter.
+  trampoline loop over the current continuation; each iteration runs a step of the computation.
+  '''
   value = None
   while cont:
     if trace_enabled:
       print(cont_sym, cont)
-    cont, value = cont.run(value)
+    cont, value = cont(value)
     if trace_enabled and value:
       print(trace_sym, value, file=sys.stderr)
   return value
@@ -575,12 +576,18 @@ def rep_loop():
 
 if __name__ == '__main__':
   args = sys.argv[1:]
-  trace_enabled = ('-trace' in args)
-  paths = [a for a in args if a not in options]
+  flags = [a for a in args if a.startswith('-')]
+  paths = [a for a in args if not a.startswith('-')]
+
+  for f in flags:
+    if f not in known_flags:
+      error('unknown flag:', f)
+
+  trace_enabled = ('-trace' in flags)
 
   for path in paths:
     cont, value = sub_eval_load_from_path(None, global_env, path)
     eval_loop(cont)
 
-  if not args:
+  if not paths:
     rep_loop()
