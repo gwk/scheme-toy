@@ -2,7 +2,15 @@
 
 '''
 Interpreter for a Scheme-like language.
-Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html
+Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html.
+
+This implementation is mostly interesting because it uses continuations explicitly.
+Every step of the computation is performed by a continuation (a Python closure),
+which takes a single value argument (the result of the previous step),
+and returns a (continuation, value) pair.
+The interpreter runs in a loop, repeatedly passing the value of the previous step to the current continuation.
+This allows us to implement call-with-current-continuation easily,
+and also to trace the progress of evaluation by printing out the intermediate value printed by each continuation step.
 '''
 
 import re
@@ -22,17 +30,6 @@ rep_val_sym = white_circle = '○'
 known_flags = { '-trace' }
 
 trace_enabled = False
-
-
-def chain_from_iterable(iterable):
-  'create a chain from an iterable (currently unused).'
-  anchor = [None, None] # chain to be returned is the tail of anchor
-  current = anchor
-  for i in iterable:
-    c = [i, None]
-    current[1] = c
-    current = c
-  return anchor[1]
 
 
 def error(*items):
@@ -59,7 +56,13 @@ class EnvError(PloyError):
   pass
 
 
+class CallError(PloyError):
+  pass
+
+
 class Symbol:
+
+  __slots__ = ['name'] # slots speed things up a tad and save memory
 
   def __init__(self, name):
     self.name = name
@@ -74,42 +77,95 @@ class Symbol:
     return self.name == other.name if isinstance(other, Symbol) else False
 
 
+# predefined symbols
+# S_dot is a hack for the Cons chain iterator.
+S_lambda, S_if, S_begin, S_set, S_define, S_load, S_quote, S_dot \
+= (Symbol(s) for s in ('lambda', 'if', 'begin', 'set!', 'define', 'load', 'quote', '.'))
+
+
+class Cons:
+  'cons cell.'
+
+  __slots__ = ['hd', 'tl'] # slots speed things up a tad and save memory
+  
+  def __init__(self, hd, tl=None):
+    self.hd = hd
+    self.tl = tl
+
+  def __iter__(self):
+    c = self
+    while isinstance(c, Cons):
+      yield c.hd
+      c = c.tl
+    if c is not None:
+      yield S_dot
+      yield c
+
+  def __eq__(self, other):
+    if not isinstance(other, Cons):
+      return False
+    for a, b in zip(self, other):
+      if a != b:
+        return False
+    return True
+
+  def __repr__(self):
+    return '({})'.format(' '.join(repr(i) for i in self))
+
+
+def chain_from_iterable(iterable):
+  'create a chain from an iterable.'
+  anchor = Cons(None) # chain to be returned is the tail of anchor
+  current = anchor
+  for i in iterable:
+    c = Cons(i)
+    current.tl = c
+    current = c
+  return anchor.tl
+
+
 class Env:
   
-  def setVars(self, names, values):
-    if names == None:
-      return
-    elif isinstance(names, Symbol):
-      self.vars[str(names)] = values
-    else:   
-      name, restNames = names
-      value, restValues = values
-      self.vars[str(name)]=value
-      self.setVars(restNames, restValues)
+  __slots__ = ['parent', 'bindings']
 
-  def __init__(self, parent, var_names = None, values = None):
+  def __init__(self, parent, bindings):
     self.parent = parent
-    self.vars = {}
-    self.setVars(var_names, values)
+    self.bindings = bindings
 
-  def get(self, var_name):
-    if var_name in self.vars:
-      return self.vars[var_name]
-    elif self.parent != None:
-      return self.parent.get(var_name)
+  def dump(self):
+    if not trace_enabled:
+      return
+    print('\nEnvironment Dump:')
+    pprint(self.bindings)
+    if self.parent:
+      self.parent.dump()
     else:
-      raise EnvError('get unknown variable:', var_name)
+      print()
 
-  def set(self, var_name, value):
-    if var_name in self.vars:
-      self.vars[var_name] = value
-    elif self.parent != None:
-      return self.parent.set(var_name, value)
-    else:
-      raise EnvError('set unknown variable:', var_name)
+  def get(self, name):
+    e = self
+    while e:
+      try:
+        return e.bindings[name]
+      except KeyError:
+        e = e.parent
+        continue
+    self.dump()
+    raise EnvError('cannot get unbound variable:', name)
 
-  def define(self, var_name, value):
-    self.vars[var_name] = value
+  def set(self, name, value):
+    e = self
+    while e:
+      if name in e:
+        e.bindings[name] = value
+        return
+      else:
+        e = e.parent
+    self.dump()
+    raise EnvError('cannot set unbound variable:', name)
+
+  def define(self, name, value):
+    self.bindings[name] = value
     
 
 # tokenizer
@@ -178,49 +234,47 @@ def tokenize(source_text):
 
 # s-expressions
 
-# predefined symbols
-S_lambda, S_if, S_begin, S_set, S_define, S_load, S_quote \
-= (Symbol(s) for s in ('lambda', 'if', 'begin', 'set!', 'define', 'load', 'quote'))
-
 
 def sexpr(token_stream):
   'parse an s-expression from a token stream.'
   token_type, value = next(token_stream)
   if token_type == T_sq:
-    return [S_quote, [sexpr(token_stream), None]]
+    return Cons(S_quote, Cons(sexpr(token_stream)))
   elif token_type == T_op:
-    cons = [None, None]
-    lst = cons
+    anchor = Cons(None)
+    current = anchor
     sub_value = None
     while True:
       sub_value = sexpr(token_stream)
-      if sub_value not in [')', '.']:
-        cons[1] = [sub_value, None]
-        cons = cons[1]
-      else:
+      if sub_value in (')', '.'):
         break
+      c = Cons(sub_value)
+      current.tl = c
+      current = c
+    # process closing token value
     if sub_value == '.':
-      cons[1] = sexpr(token_stream)
-      token_type, sub_value = next(token_stream)
+      current.tl = sexpr(token_stream)
+      sub_token_type, sub_value = next(token_stream)
     if sub_value == ')':
-      return lst[1]
+      return anchor.tl
     else:
-      raise ParseError('Expected closing parenthesis for expression:', lst, sub_value)
+      raise ParseError('Expected closing parenthesis for expression:', anchor.tl, sub_value)
   else:
     return value
 
 
 def sexprs(token_stream):
   'parse a sequence of s-expressions from a token stream.'
-  lst = [None, None]
-  cur = lst
+  anchor = Cons(None)
+  current = anchor
   try:
     while True:
-      cur[1] = [sexpr(token_stream), None]
-      cur = cur[1]
+      c = Cons(sexpr(token_stream))
+      current.tl = c
+      current = c
   except StopIteration:
     pass
-  return lst[1]
+  return anchor.tl
     
     
 def native_fn(py_fn):
@@ -229,11 +283,8 @@ def native_fn(py_fn):
   used to create various builtin functions.
   '''
   def f(cont, args):
-    argList = []
-    while args != None:
-      arg, args = args
-      argList.append(arg)
-    return cont, py_fn(*argList)
+    arg_iter = args if args else ()
+    return cont, py_fn(*arg_iter)
   return f
 
 
@@ -242,54 +293,58 @@ def create_eval_fn(env):
   create a scheme eval function using the given environment.
   used to create the 'eval' scheme builtin.
   '''
-  def eval_func(cont, arg):
-    expr, nil = arg
+  def eval_func(cont, args):
+    expr = args.hd
+    assert args.tl is None
     return (Cont_eval(cont, env, expr), None)
   return eval_func
 
 
-def py_exec(cont, arg):
+def py_exec(cont, args):
   'py-exec builtin implementation.'
-  code, nil = arg
-  exec(code, py_env)
+  source_text = arg.hd
+  assert arg.tl is None
+  exec(source_text, py_env)
   return (cont, None)
 
 
 def py_eval(cont, arg):
   'py-eval builtin implementation.'
-  code, nil = arg
-  return (cont, eval(code, py_env))
+  source_text = arg.hd
+  assert arg.tl is None
+  return (cont, eval(source_text, py_env))
 
 
 def call_cc(cont, args):
   'call/cc builtin implementation.'
-  func, nil = args
-  def cont_func(cont_ignored, arg_nil):
+  func = args.hd
+  assert args.tl is None
+  def cont_func(cont_ignored, args):
     'note that the argument continuation is ignored and replaced by the captured continuation.'
-    arg, nil = arg_nil
+    arg = args.hd
+    assert args.tl is None
     return (cont, arg)
-  return func(cont, (cont_func, None))
+  return func(cont, Cons(cont_func))
 
 
 # environment for py-exec and py-eval
 py_env = {}
 
-global_env = Env(None)
-
-global_env.vars = {
-  'eval'    : create_eval_fn(global_env), # note the reference cycle
+global_env = Env(None, {
   'py-exec' : py_exec,
   'py-eval' : py_eval,
   'call/cc' : call_cc,
   'call-with-current-continuation' : call_cc,
-}
+})
+
+global_env.define('eval', create_eval_fn(global_env.bindings)) # note the reference cycle
 
 
 def add_native_fn(name, py_fn):
-  'wrapper used to give builtin functions names for error clarity.'
+  'wrapper used to give builtin functions names for error and trace clarity.'
   f = native_fn(py_fn)
-  f.__qualname__ = 'native:' + name
-  global_env.vars[name] = f
+  f.__qualname__ = 'native:' + name # qualname is used by function repr implementation.
+  global_env.define(name, f)
 
 
 add_native_fn('+', lambda *args: sum(args))
@@ -300,9 +355,9 @@ add_native_fn('>', lambda a, b: a > b)
 add_native_fn('<=', lambda a, b: a <= b)
 add_native_fn('>=', lambda a, b: a >= b)
 add_native_fn('eq?', lambda a, b: a == b)
-add_native_fn('cons', lambda a, b: [a, b])
-add_native_fn('car', lambda a_b: a_b[0])
-add_native_fn('cdr', lambda a_b: a_b[1])
+add_native_fn('cons', lambda a, b: Cons(a, b))
+add_native_fn('car', lambda c: c.hd)
+add_native_fn('cdr', lambda c: c.tl)
 add_native_fn('display', print)
 
 # for now define test as a  builtin function; should be a macro
@@ -354,14 +409,16 @@ def Cont_apply(cont):
     '''
     value is the evaluated operator and args list.
     '''
-    operator, args = value
+    operator = value.hd
+    args = value.tl
     return operator(cont, args)
   return cont_apply
 
 
 def Cont_expr_list(cont, env, exprs):
   'continuation for the evaluation of an expression list (function bodies, begin).'
-  expr, rest = exprs
+  expr = exprs.hd
+  rest = exprs.tl
   # recursively create continuations for the remainder of the expr list evaluation.
   next_cont = Cont_expr_list(cont, env, rest) if rest else cont
   def cont_expr_list(value_ignored):
@@ -373,12 +430,13 @@ def Cont_expr_list(cont, env, exprs):
   return cont_expr_list
 
 
-def Cont_arg(cont, env, args, val_list):
+def Cont_arg(cont, env, exprs, val_list):
   '''
   continuation for the evaluation of a function argument.
   val_list is a python list that accumulates the argument values.
   '''
-  expr, rest = args
+  expr = exprs.hd
+  rest = exprs.tl
   # recursively create continuations for the remainder of the arg list evaluation.
   next_cont = Cont_arg(cont, env, rest, val_list) if rest else cont
   def cont_arg(value):
@@ -428,43 +486,80 @@ def sub_eval_load_from_path(cont, env, path):
 
 
 def eval_set(cont, env, code):
-  set_sym, (var_name, (expr, nil)) = code
+  assert code.hd == S_set
+  rest = code.tl
+  expr = rest.hd
+  assert rest.tl is None
   cont = Cont_set(cont, env, str(var_name))
   return eval_(cont, env, expr)
 
 
 def eval_quote(cont, env, code):
-  quote_sym, (item, nil) = code
-  return (cont, item)
+  assert code.hd == S_quote
+  rest = code.tl
+  expr = rest.hd
+  assert rest.tl is None
+  return (cont, expr)
 
 
 def eval_begin(cont, env, code):
-  begin_sym, exprs = code
+  assert code.hd == S_begin
+  exprs = code.tl
   return sub_eval_expr_list(cont, env, exprs)
 
 
-def eval_lambda(cont, parent_env, code):
-  lambda_sym, (params, exprs) = code
+def eval_lambda(cont, env, code):
+  '''
+  note that environments are lexically scoped:
+  the immediate environment (argument bindings) of a function call is created at call-time,
+  but the parent env is determined when the call to lambda (not the call to the resulting function) is made.
+  '''
+  assert code.hd == S_lambda
+  rest = code.tl
+  params = rest.hd
+  exprs = rest.tl
+  names = [p.name for p in params] # params are Symbol objects
   def func(cont, args):
-    new_env = Env(parent_env, params, args)
-    return sub_eval_expr_list(cont, new_env, exprs)
+    vals = list(args)
+    if not len(names) == len(vals):
+      raise CallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
+    bindings = dict(zip(names, args))
+    call_env = Env(env, bindings)
+    return sub_eval_expr_list(cont, call_env, exprs)
   return (cont, func)
 
 
 def eval_if(cont, env, code):
-  if_sym, (predicate, (then_code, rest)) = code
-  else_code = rest[0] if rest else None
+  assert code.hd == S_if
+  rest = code.tl
+  predicate = rest.hd
+  rest = rest.tl
+  then_code = rest.hd
+  rest = rest.tl
+  if rest is not None:
+    else_code = rest.hd
+    assert rest.tl is None
+  else:
+    else_code = None
   return eval_(Cont_if(cont, env, then_code, else_code), env, predicate)
 
 
 def eval_define(cont, env, code):
-  define_sym, (var_name, (expr, nil)) = code
+  assert code.hd == S_define
+  rest = code.tl
+  var_name = rest.hd
+  rest = rest.tl
+  expr = rest.hd
+  assert rest.tl is None
   cont = Cont_define(cont, env, str(var_name))
   return eval_(cont, env, expr)
   
 
 def eval_load(cont, env, code):
-  load_sym, (path, nil) = code
+  assert code.hd == S_load
+  rest = code.tl
+  path = rest.hd
+  assert rest.tl is None
   return sub_eval_load_from_path(cont, env, path)
   
 
@@ -475,20 +570,20 @@ def eval_apply(cont, env, code):
 
 
 def eval_(cont, env, code):
-  if isinstance(code, list):
-    if code[0] == S_lambda:
-      return eval_lambda(cont, env,  code)
-    elif code[0] == S_if:
+  if isinstance(code, Cons):
+    if code.hd == S_lambda:
+      return eval_lambda(cont, env, code)
+    elif code.hd == S_if:
       return eval_if(cont, env, code)
-    elif code[0]== S_begin:
+    elif code.hd == S_begin:
       return eval_begin(cont, env, code)
-    elif code[0] == S_define:
+    elif code.hd == S_define:
       return eval_define(cont, env, code)
-    elif code[0] == S_set:
+    elif code.hd == S_set:
       return eval_set(cont, env, code)
-    elif code[0] == S_quote:
+    elif code.hd == S_quote:
       return eval_quote(cont, env, code)
-    elif code[0] == S_load:
+    elif code.hd == S_load:
       return eval_load(cont, env, code)
     else:
       return eval_apply(cont, env, code)
@@ -528,6 +623,7 @@ def token_level(t):
 
 
 def read_input():
+  'prompt and read input from stdin.'
   tokens = []
   level = 0
   while not tokens or level > 0:
