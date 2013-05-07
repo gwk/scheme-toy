@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
+# Copyright 2013 George King.
+# Permission to use this file is granted in ploy/license.txt.
 
 '''
 Interpreter for a Scheme-like language.
 Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html.
+Note that as of 2013-05-07 there is no copyright or license specification in that example.
+
+Another source of inspiration: http://norvig.com/lispy.html
+Further improvements could be made by following: http://norvig.com/lispy2.html
 
 This implementation is mostly interesting because it uses continuations explicitly.
 Every step of the computation is performed by a continuation (a Python closure),
@@ -14,8 +20,6 @@ and also to trace the progress of evaluation by printing out the intermediate va
 '''
 
 import re
-import functools
-import operator
 import sys
 
 from pprint import pprint
@@ -347,18 +351,31 @@ def add_native_fn(name, py_fn):
   global_env.define(name, f)
 
 
-add_native_fn('+', lambda *args: sum(args))
-add_native_fn('*', lambda *args: functools.reduce(operator.mul, args))
-add_native_fn('-', lambda a, b: a - b)
-add_native_fn('<', lambda a, b: a < b)
-add_native_fn('>', lambda a, b: a > b)
-add_native_fn('<=', lambda a, b: a <= b)
-add_native_fn('>=', lambda a, b: a >= b)
-add_native_fn('eq?', lambda a, b: a == b)
-add_native_fn('cons', lambda a, b: Cons(a, b))
-add_native_fn('car', lambda c: c.hd)
-add_native_fn('cdr', lambda c: c.tl)
-add_native_fn('display', print)
+def add_native_fns():
+  import functools as ft
+  import operator as op
+  add_native_fn('+',  lambda *args: sum(args))
+  add_native_fn('*',  lambda *args: ft.reduce(op.mul, args, 1))
+  add_native_fn('-',  op.sub)
+  add_native_fn('/',  op.truediv)
+  add_native_fn('//', op.floordiv)
+  add_native_fn('<',  op.lt)
+  add_native_fn('>',  op.gt)
+  add_native_fn('<=', op.le)
+  add_native_fn('>=', op.ge)
+  add_native_fn('not', op.not_)
+  add_native_fn('eq?', op.eq)
+  #add_native_fn('equal?' or 'eqv?', is_)
+  add_native_fn('cons', lambda a, b: Cons(a, b))
+  add_native_fn('car', lambda c: c.hd)
+  add_native_fn('cdr', lambda c: c.tl)
+  add_native_fn('symbol?', lambda x: isinstance(s, Symbol))
+  add_native_fn('list?', lambda x: x is None or isinstance(x, Cons))
+  add_native_fn('cons?', lambda x: isinstance(x, Cons))
+  add_native_fn('display', print)
+
+add_native_fns()
+
 
 # for now define test as a  builtin function; should be a macro
 def test(a, b):
