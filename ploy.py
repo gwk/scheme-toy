@@ -7,7 +7,7 @@ Interpreter for a Scheme-like language.
 Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html.
 Note that as of 2013-05-07 there is no copyright or license specification in that example.
 
-Another source of inspiration: http://norvig.com/lispy.html
+Another source of inspiration: http://norvig.com/lispy.html 
 Further improvements could be made by following: http://norvig.com/lispy2.html
 
 This implementation is mostly interesting because it uses continuations explicitly.
@@ -113,8 +113,8 @@ class Cons:
         return False
     return True
 
-  def __repr__(self):
-    return '({})'.format(' '.join(repr(i) for i in self))
+  def __str__(self):
+    return '({})'.format(' '.join(str(i) for i in self))
 
 
 def chain_from_iterable(iterable):
@@ -618,14 +618,21 @@ def eval_loop(cont):
   the core of the interpreter.
   trampoline loop over the current continuation; each iteration runs a step of the computation.
   '''
-  value = None
-  while cont:
-    if trace_enabled:
-      print(cont_sym, cont)
-    cont, value = cont(value)
-    if trace_enabled and value:
-      print(trace_sym, value, file=sys.stderr)
-  return value
+  try:
+    value = None
+    while cont:
+      if trace_enabled:
+        print(cont_sym, cont)
+      cont, value = cont(value)
+      if trace_enabled and value:
+        print(trace_sym, value, file=sys.stderr)
+    return value
+  except KeyboardInterrupt:
+    print(' Interrupt')
+  except PloyError as e:
+    print()
+    print('error:', e.message)
+  return None
 
 
 # read eval loop
@@ -677,14 +684,12 @@ def rep_loop():
     except EOFError: # exit the REPL
       print()
       break
-    # other errors return to top level of REPL
+    # error handling in eval_loop is duplicated here to catch errors in sub_eval_tokens
     except KeyboardInterrupt:
       print(' Interrupt')
-      continue
     except PloyError as e:
       print()
-      print(e.message)
-      continue
+      print('error:', e.message)
 
 
 if __name__ == '__main__':
