@@ -243,7 +243,10 @@ def sexpr(token_stream):
   'parse an s-expression from a token stream.'
   token_type, value = next(token_stream)
   if token_type == T_sq:
-    return Cons(S_quote, Cons(sexpr(token_stream)))
+    next_val = sexpr(token_stream)
+    if next_val == ')':
+      raise ParseError('cannot quote closing parenthesis')
+    return Cons(S_quote, Cons(next_val))
   elif token_type == T_op:
     anchor = Cons(None)
     current = anchor
