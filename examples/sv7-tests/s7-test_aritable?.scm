@@ -1,0 +1,56 @@
+(for-each
+ (lambda (arg)
+   (if (aritable? arg 0)
+       (format #t ";(aritable? ~A) -> #t?~%" arg)))
+ (list :hi (integer->char 65) 1 #t 3.14 3/4 1.0+1.0i #\f #<eof> #<unspecified>))
+
+(for-each
+ (lambda (arg)
+   (let ((val (catch #t (lambda () (aritable? abs arg)) (lambda args 'error))))
+     (if (not (eq? val 'error))
+	 (format #t ";(aritable? abs ~A) -> ~A?~%" arg val))))
+ (list :hi (integer->char 65) -1 most-negative-fixnum macroexpand quasiquote (lambda () #f) 
+       car #() "hi" (list 1 2) 3.14 3/4 1.0+1.0i #\f #<eof> #<unspecified>))
+
+(test (aritable?) 'error)
+(test (aritable? abs) 'error)
+
+(test (aritable? car 0) #f)
+(test (aritable? car 1) #t)
+(test (aritable? car 2) #f)
+(test (aritable? car 3) #f)
+(test (aritable? car most-negative-fixnum) 'error)
+(test (aritable? car most-positive-fixnum) #f)
+(test (aritable? + most-positive-fixnum) #t)
+(test (aritable? + 0) #t)
+(test (aritable? log 2) #t)
+(test (aritable? catch 2) #f)
+(test (aritable? set! 0) #f)
+(test (aritable? begin 0) #t)
+(test (aritable? (make-random-state 123) 0) #f)
+;;; more tests under arity
+
+(test (let () (define-macro (mac1 a b c) `(+ ,a ,b)) (aritable? mac1 2))   #f)
+(test (let () (define-macro (mac1 a b . c) `(+ ,a ,b)) (aritable? mac1 2)) #t)
+(test (let () (define-bacro (mac1 a b c) `(+ ,a ,b)) (aritable? mac1 1))   #f)
+(test (let () (define-bacro (mac1 a b . c) `(+ ,a ,b)) (aritable? mac1 3)) #t)
+(test (let () (defmacro mac1 (a b c) `(+ ,a ,b)) (aritable? mac1 4))       #f)
+(test (let () (defmacro mac1 (a b . c) `(+ ,a ,b)) (aritable? mac1 2))     #t)
+(test (let () (define-macro (mac1 a) `(+ 1 ,a)) (aritable? mac1 0))        #f)
+
+(test (let () (define-macro* (mac1 . a) `(+ ,a ,b)) (aritable? mac1 3))    #t)
+(test (let () (define-macro* (mac1 a) `(+ 1 ,a)) (aritable? mac1 0))       #t)
+
+(test (let () (define-macro* (mac1 a :rest b) `(+ 1 ,a)) (aritable? mac1 21)) #t)
+(test (let () (define-macro* (mac1 a . b) `(,a ,@b)) (aritable? mac1 4))   #t)
+(test (let () (define-macro* (mac1 a b c) `(+ ,a ,b)) (aritable? mac1 2))  #t)
+
+(test (aritable? "hiho" 0) #f)
+(test (aritable? "" 1) #t)
+(test (aritable? () 0) #f)
+(test (aritable? #() 1) #t)
+(test (aritable? #(1 2 3) 0) #f)
+(test (aritable? (hash-table '(a . 1)) 2) #t)
+(test (aritable? (current-environment) 1) #t)
+(test (let () (call-with-exit (lambda (goto) (aritable? goto 1)))) #t)
+(test (aritable? (make-hash-table-iterator (hash-table '(a . 1))) 1) #t)

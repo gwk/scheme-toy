@@ -1,0 +1,41 @@
+(test (char-upcase #\A) #\A)
+(test (char-upcase #\a) #\A)
+(test (char-upcase #\?) #\?)
+(test (char-upcase #\$) #\$)
+(test (char-upcase #\.) #\.)
+(test (char-upcase #\\) #\\)
+(test (char-upcase #\5) #\5)
+(test (char-upcase #\)) #\))
+(test (char-upcase #\%) #\%)
+(test (char-upcase #\0) #\0)
+(test (char-upcase #\_) #\_)
+(test (char-upcase #\?) #\?)
+(test (char-upcase #\space) #\space)
+(test (char-upcase #\newline) #\newline)
+(test (char-upcase #\null) #\null)
+(test (char-upper-case? (char-upcase #\?)) #f) ; !
+(test (char-lower-case? (char-downcase #\?)) #f)
+(test (char-upper-case? (char-upcase #\_)) #f)
+(test (or (char-upper-case? #\?) (char-lower-case? #\?)) #f)
+
+(for-each
+ (lambda (arg1 arg2)
+   (if (not (char=? (char-upcase arg1) arg2))
+ (format #t ";(char-upcase ~A) != ~A?~%" arg1 arg2)))
+ a-to-z
+ cap-a-to-z)
+
+(do ((i 1 (+ i 1)))
+    ((= i 256))
+  (if (and (not (char=? (integer->char i) (char-upcase (integer->char i))))
+     (not (char-alphabetic? (integer->char i))))
+(format #t ";(char-upcase ~A) -> ~A but not alphabetic?~%" (integer->char i) (char-upcase (integer->char i)))))
+
+(test (recompose 12 char-upcase #\a) #\A)
+(test (reinvert 12 char-upcase char-downcase #\a) #\a)
+
+(test (char-upcase) 'error)
+(test (char-upcase #\a #\b) 'error)
+(test (char-upcase #<eof>) 'error)
+(test (char-upcase #f) 'error)
+(test (char-upcase (list)) 'error)

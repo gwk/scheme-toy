@@ -1,0 +1,67 @@
+(test (negative? 4) #f )
+(test (negative? 4/3) #f )
+(test (negative? -4) #t )
+(test (negative? -4/3) #t )
+(test (negative? -0/4) #f)
+(test (negative? 0) #f )
+(test (negative? -0) #f )
+(test (negative? 0.0) #f )
+(test (negative? -0.0) #f )
+(test (negative? (expt -0.0 1)) #f)
+(test (negative? (/ -0.0 1.0)) #f)
+(test (negative? (* -0.0 1.0)) #f)
+(test (negative?) 'error)
+(test (negative? 1-0i) #f)
+(test (negative? -1.797693134862315699999999999999999999998E308) #t)
+(test (negative? -2.225073858507201399999999999999999999996E-308) #t)
+(test (negative? -9223372036854775808) #t)
+(test (negative? 1.110223024625156799999999999999999999997E-16) #f)
+(test (negative? 9223372036854775807) #f)
+(test (negative? most-negative-fixnum) #t)
+(test (negative? most-positive-fixnum) #f)
+(test (negative? +inf.0) #f)
+(test (negative? -inf.0) #t)
+(test (negative? nan.0) #f)
+(test (negative? 1000000000000000000000000000000000) #f)
+(test (negative? -1000000000000000000000000000000000) #t)
+(test (negative? most-negative-fixnum) #t)
+(test (negative? most-positive-fixnum) #f)
+
+(for-each
+ (lambda (n)
+   (if (negative? n)
+       (format #t ";(negative? ~A) -> #t?~%" n)))
+ (list 1 123 123456123 1.4 0.001 1/2 12341243124.2))
+
+(for-each
+ (lambda (n)
+   (if (not (negative? n))
+       (format #t ";(negative? ~A) -> #f?~%" n)))
+ (list -1 -123 -123456123 -2/3 -0.00001 -1.4 -123124124.1))
+
+(let ((val1 (catch #t (lambda () (negative? 0.0)) (lambda args 'error)))
+      (val2 (catch #t (lambda () (negative? -0.0)) (lambda args 'error))))
+  (test (equal? val1 val2) #t))
+
+(if with-bignums
+    (begin
+      (test (negative? -9.92209574402351949043519108941671096176E-1726) #t)
+      (test (negative? 12345678901234567890) #f)
+      (test (negative? -12345678901234567890) #t)
+      (test (negative? 9223372036854775808) #f)
+      (test (negative? 9223372036854775808.1) #f)
+      (test (negative? 9223372036854775808/3) #f)
+      (test (negative? 0+92233720368547758081.0i) 'error)
+      ))
+
+(test (negative? -1-i) 'error)
+(test (negative? 1.23+1.0i) 'error)
+(test (negative? 1.23 1.23) 'error)
+(test (negative?) 'error)
+(test (negative? 1 2) 'error)
+
+(for-each
+ (lambda (arg)
+   (test (negative? arg) 'error))
+ (list "hi" '() (integer->char 65) #f #t '(1 2) _ht_ 'a-symbol (cons 1 2) (make-vector 3) abs 
+       #<eof> '(1 2 3) #\newline (lambda (a) (+ a 1)) #<unspecified> #<undefined>))

@@ -1,0 +1,87 @@
+(test (procedure-setter) 'error)
+(test (procedure-setter car cons) 'error)
+(test (procedure-setter car) set-car!)
+(test (procedure-setter vector-ref) vector-set!)
+(test (procedure-setter make-string) #f)
+(test (procedure-setter quasiquote) #f)
+(test (procedure-setter macroexpand) #f)
+
+(test (procedure-setter cdr) set-cdr!)
+(test (procedure-setter hash-table-ref) hash-table-set!)
+(test (procedure-setter list-ref) list-set!)
+(test (procedure-setter string-ref) string-set!)
+(test (procedure-setter current-input-port) set-current-input-port)
+(test (procedure-setter current-output-port) set-current-output-port)
+(test (procedure-setter current-error-port) set-current-error-port)
+
+(for-each
+ (lambda (arg)
+   (test (procedure-setter arg) 'error))
+ (list -1 #\a #f _ht_ 1 '#(1 2 3) 3.14 3/4 1.0+1.0i '() 'hi 'car "car" :hi '#(()) (list 1 2 3) '(1 . 2) "hi"))
+
+(for-each
+ (lambda (arg)
+   (test (set! (procedure-setter abs) arg) 'error))
+ (list -1 #\a #t _ht_ 1 '#(1 2 3) 3.14 3/4 1.0+1.0i '() 'hi 'car "car" :hi '#(()) (list 1 2 3) '(1 . 2) "hi"))
+
+(let ()
+  (define (hiho a) a)
+  (define-macro (hiha a) `(+ 1 ,a))
+  (define-bacro* (hoha a) `(+ 1 ,a))
+  (define pws (make-procedure-with-setter (lambda () 1) (lambda (x) x)))
+  (test (procedure-setter hiho) #f)
+  (test (procedure-setter hiha) #f)
+  (test (procedure-setter hoha) #f)
+  (test (procedure? (procedure-setter pws)) #t)
+  (test ((procedure-setter pws) 32) 32)
+  )
+
+(test (let ((v #(1 2 3)))
+	((procedure-setter vector-ref) v 0 32)
+	v)
+      #(32 2 3))
+(test (let ((v #(1 2 3)))
+	((procedure-setter vector-ref) (let () v) 0 32)
+	v)
+      #(32 2 3))
+(let ()
+  (define (vref v i) (vector-ref v i))
+  (set! (procedure-setter vref) vector-set!)
+  (test (let ((v (vector 1 2 3))) (set! (vref v 1) 32) v) #(1 32 3)))
+
+(let ((old-setter (procedure-setter cadr)))
+  (set! (procedure-setter cadr) 
+	(lambda (lst val) 
+	  (set! (car (cdr lst)) val)))
+  (test (let ((lst (list 1 2 3))) 
+	  (set! (cadr lst) 4) 
+	  lst)
+	'(1 4 3))
+  (test (procedure? (procedure-setter cadr)) #t)
+  (set! (procedure-setter cadr) old-setter))
+
+(let ()
+  (define-macro (vref v a) `(vector-ref ,v ,a))
+  (define-macro (vset! v a x) `(vector-set! ,v ,a ,x))
+  (set! (procedure-setter vref) vset!)
+
+  (let ((v (vector 1 2 3)))
+    (set! (vref v 1) 32)
+    (test v #(1 32 3)))
+
+  (define hi 0)
+  (define-macro (xx) `hi)
+  (define-macro (set-xx val) `(set! hi ,val))
+  (set! (procedure-setter xx) set-xx)
+
+  (set! (xx) 32)
+  (test hi 32))
+
+(let ()
+  (set! (procedure-setter logbit?)
+        (symbol->value 
+          (define-macro (m var index on) ; here we want to set "var", so we need a macro
+	    `(if ,on
+	         (set! ,var (logior ,var (ash 1 ,index)))
+	         (set! ,var (logand ,var (lognot (ash 1 ,index))))))))
+  (test (let ((int #b1010)) (set! (logbit? int 0) #t) int) 11))

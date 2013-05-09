@@ -1,0 +1,48 @@
+(test (char-ci<? #\A #\B) #t)
+(test (char-ci<? #\a #\B) #t)
+(test (char-ci<? #\A #\b) #t)
+(test (char-ci<? #\a #\b) #t)
+(test (char-ci<? #\9 #\0) #f)
+(test (char-ci<? #\0 #\9) #t)
+(test (char-ci<? #\A #\A) #f)
+(test (char-ci<? #\A #\a) #f)
+(test (char-ci<? #\Y #\_) #t)
+(test (char-ci<? #\\ #\J) #f)
+(test (char-ci<? #\_ #\e) #f)
+(test (char-ci<? #\t #\_) #t)
+(test (char-ci<? #\a #\]) #t)
+(test (char-ci<? #\z #\^) #t)
+
+(test (char-ci<? #\b #\a "hi") 'error)
+(test (char-ci<? #\b #\a 0) 'error)
+(test (char-ci>? (integer->char #xf0) (integer->char #x70)) #t)
+
+#|
+;;; this tries them all:
+  (do ((i 0 (+ i 1)))
+      ((= i 256))
+    (do ((k 0 (+ k 1)))
+	((= k 256))
+      (let ((c1 (integer->char i))
+	    (c2 (integer->char k)))
+	(for-each
+	 (lambda (op1 op2)
+	   (if (not (eq? (op1 c1 c2) (op2 (string c1) (string c2))))
+	       (format #t ";(~A|~A ~A ~A) -> ~A|~A~%" op1 op2 c1 c2 (op1 c1 c2) (op2 (string c1) (string c2)))))
+	 (list char=? char<? char<=? char>? char>=? char-ci=? char-ci<? char-ci<=? char-ci>? char-ci>=?)
+	 (list string=? string<? string<=? string>? string>=? string-ci=? string-ci<? string-ci<=? string-ci>? string-ci>=?)))))
+|#
+  
+(test (char-ci<? #\d #\D #\d #\d) #f)
+(test (char-ci<? #\d #\d #\X #\d) #f)
+(test (char-ci<? #\d #\Y #\x #\c) #f)
+(test (apply char-ci<? cap-a-to-z) #t)
+(test (apply char-ci<? mixed-a-to-z) #t)
+(test (apply char-ci<? digits) #t)
+(test (char-ci<? #\d #\c #\d) #f)
+(test (char-ci<? #\b #\c #\a) #f)
+(test (char-ci<? #\b #\C #\e) #t)
+(test (char-ci<? #\3 #\? #\Z #\[) #t)
+
+(test (char-ci>? #\a #\b "hi") 'error)
+(test (char-ci>? #\a #\b 0) 'error)

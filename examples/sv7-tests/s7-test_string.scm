@@ -1,0 +1,21 @@
+(for-each
+ (lambda (arg)
+   (test (string #\a arg) 'error)
+   (test (string #\a #\null arg) 'error)
+   (test (string arg) 'error))
+ (list '() (list 1) '(1 . 2) "a" #f 'a-symbol (make-vector 3) abs _ht_ quasiquote macroexpand 1/0 (log 0) 
+       3.14 3/4 1.0+1.0i #t :hi (if #f #f) (lambda (a) (+ a 1))))
+
+(test (string) "")
+(test (string #\a #\b #\c) "abc")
+(test (string #\a) "a")
+(test (map string '(#\a #\b)) '("a" "b"))
+(test (map string '(#\a #\b) '(#\c #\d)) '("ac" "bd"))
+(test (map string '(#\a #\b #\c) '(#\d #\e #\f) '(#\g #\h #\i)) '("adg" "beh" "cfi"))
+(test (map string "abc" "def" "ghi") '("adg" "beh" "cfi"))
+(test (string #\" #\# #\") "\"#\"")
+(test (string #\\ #\\ #\# #\\ #\# #\#) "\\\\#\\##")
+(test (string #\' #\' #\` #\") '"''`\"")
+;;; some schemes accept \' and other such sequences in a string, but the spec only mentions \\ and \"
+(test (string '()) 'error)
+(test (string "j" #\a) 'error)

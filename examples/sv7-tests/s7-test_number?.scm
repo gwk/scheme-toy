@@ -1,0 +1,60 @@
+;;; (synonym for complex?)
+
+(test (number? -) #f)
+(test (number? +) #f)
+(test (number? 12) #t)
+(test (number? 3) #t )
+(test (number? (expt 2 130)) #t)
+(test (number? 5/3+7.2i) #t)
+(test (number? #f) #f)
+(test (number? (cons 1 2)) #f)
+(test (number? 2.5-.5i) #t)
+(test (number? most-negative-fixnum) #t)
+(test (number? 1e-308) #t)
+(test (number? 1e308) #t)
+(test (number? 0+0i) #t)
+(test (number? (log 0)) #t)
+(test (number? (real-part (log 0))) #t)
+(test (number? '-1-i) #t)
+(test (number? -1.797693134862315699999999999999999999998E308) #t)
+(test (number? -2.225073858507201399999999999999999999996E-308) #t)
+(test (number? -9223372036854775808) #t)
+(test (number? 1.110223024625156799999999999999999999997E-16) #t)
+(test (number? 9223372036854775807) #t)
+(test (number? +inf.0) #t)
+(test (number? -inf.0) #t)
+(test (number? nan.0) #t)
+(test (number? inf+infi) #t)
+(test (number? nan+nani) #t)
+(test (number? 0+infi) #t)
+(test (number? 0+nani) #t)
+(test (number? pi) #t)
+(test (number? 0/0) #t)
+
+(for-each
+ (lambda (n)
+   (let ((nb (catch #t (lambda () (number? n)) (lambda args 'error))))
+     (if (not nb) (format #t ";(number? ~A) -> #f?~%" n))))
+ (list '1e311 '1e-311 '0e311 '2.1e40000))
+
+(if with-bignums
+    (begin
+      (test (number? 1234567891234567890/1234567) #t)
+      (test (number? 9223372036854775808) #t)
+      (test (number? 9223372036854775808.1) #t)
+      (test (number? 9223372036854775808.1+1.5i) #t)
+      (test (number? 9223372036854775808/3) #t)))
+
+(test (number?) 'error)
+(test (number? 1 2) 'error)
+
+(for-each
+ (lambda (op opname)
+   (for-each
+    (lambda (arg)
+      (if (op arg)
+	  (format #t ";(~A ~A) -> #t?~%" op arg)))
+    (list "hi" '() (integer->char 65) #f #t '(1 2) _ht_ 'a-symbol (cons 1 2) (make-vector 3) abs 
+	  #<eof> '(1 2 3) #\newline (lambda (a) (+ a 1)) #<unspecified> #<undefined>)))
+ (list number? complex? real? rational? integer? infinite? nan?)
+ (list 'number? 'complex? 'real? 'rational? 'integer? 'infinite? 'nan?))

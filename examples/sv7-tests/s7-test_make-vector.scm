@@ -1,0 +1,43 @@
+(test (let ((v (make-vector 3 #f))) (and (vector? v) (= (vector-length v) 3) (eq? (vector-ref v 1) #f))) #t)
+(test (let ((v (make-vector 1 1))) (and (vector? v) (= (vector-length v) 1) (vector-ref v 0))) 1)
+(test (let ((v (make-vector 0 1))) (and (vector? v) (= (vector-length v) 0))) #t)
+(test (do ((vec (make-vector 5)) (i 0 (+ i 1))) ((= i 5) vec) (vector-set! vec i i)) '#(0 1 2 3 4))
+(test (let ((v (make-vector 5))) (for-each (lambda (i) (vector-set! v i (* i i))) '(0 1 2 3 4)) v) '#(0 1 4 9 16))
+(test (make-vector 2 'hi) '#(hi hi))
+(test (make-vector 0) '#())
+(test (make-vector -0) #())
+(test (make-vector 0 'hi) '#())
+(test (make-vector 3 (make-vector 1 'hi)) '#(#(hi) #(hi) #(hi)))
+(test (make-vector 3 '#(hi)) '#(#(hi) #(hi) #(hi)))
+(test (make-vector 9/3 (list)) '#(() () ()))
+(test (make-vector 3/1 (make-vector 1 (make-vector 1 'hi))) '#(#(#(hi)) #(#(hi)) #(#(hi))))
+
+(test (let ((v (make-vector 3 0))) (set! (vector-ref v 1) 32) v) #(0 32 0))
+
+(for-each
+ (lambda (arg)
+   (test (vector-ref (make-vector 1 arg) 0) arg))
+ (list #\a 1 () (list 1) '(1 . 2) #f "hi" 'a-symbol abs _ht_ quasiquote macroexpand (log 0) 
+       3.14 3/4 1.0+1.0i #t (vector 1 2 3) (lambda (a) (+ a 1))))
+
+(test (make-vector) 'error)
+(test (make-vector 1 #f #t) 'error)
+(test (make-vector 1 2 3) 'error)
+(test (make-vector most-positive-fixnum) 'error)
+(test (make-vector most-negative-fixnum) 'error)
+(test (make-vector '(2 -2)) 'error)
+(test (make-vector (list 2 -2 -3)) 'error)
+(test (make-vector (cons 2 3)) 'error)
+(test (make-vector '(2 3 . 4)) 'error)
+(test (make-vector '(2 (3))) 'error)
+(test (make-vector most-negative-fixnum) 'error)
+
+(for-each
+ (lambda (arg)
+   (test (make-vector arg) 'error)
+   (test (make-vector (list 2 arg)) 'error))
+ (list #\a () -1 #f "hi" 'a-symbol abs _ht_ quasiquote macroexpand 1/0 (log 0) 
+       3.14 3/4 1.0+1.0i #t (vector 1 2 3) (lambda (a) (+ a 1))))
+
+(test (eval-string "#2147483649D()") 'error)
+(test (eval-string "#-9223372036854775808D()") 'error)
