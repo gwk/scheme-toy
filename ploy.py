@@ -48,19 +48,19 @@ class PloyError(Exception):
     super().__init__(self, self.message)
 
 
-class TokenError(PloyError):
+class PloyTokenError(PloyError):
   pass
 
-
-class ParseError(PloyError):
+class PloyParseError(PloyError):
   pass
 
-
-class EnvError(PloyError):
+class PloyEnvError(PloyError):
   pass
 
+class PloyCallError(PloyError):
+  pass
 
-class CallError(PloyError):
+class PloyTypeError(PloyError):
   pass
 
 
@@ -83,9 +83,9 @@ class Symbol:
 
 # predefined symbols
 # S_dot is a hack for the Cons chain iterator.
-S_dot, S_quote, S_begin, S_lambda, S_if, S_define, S_set, S_load, \
+S_dot, S_quote, S_begin, S_lambda, S_let, S_if, S_define, S_set, S_load, \
 = (Symbol(s) for s in \
-('.', 'quote', 'begin', 'lambda', 'if', 'define', 'set!', 'load'))
+('.', 'quote', 'begin', 'lambda', 'let', 'if', 'define', 'set!', 'load'))
 
 
 class Cons:
@@ -156,7 +156,7 @@ class Env:
         e = e.parent
         continue
     self.dump()
-    raise EnvError('cannot get unbound variable:', name)
+    raise PloyEnvError('cannot get unbound variable:', name)
 
   def set(self, name, value):
     e = self
@@ -167,7 +167,7 @@ class Env:
       else:
         e = e.parent
     self.dump()
-    raise EnvError('cannot set unbound variable:', name)
+    raise PloyEnvError('cannot set unbound variable:', name)
 
   def define(self, name, value):
     self.bindings[name] = value
@@ -196,7 +196,7 @@ def gen_tokens(source_text):
   for i, part in enumerate(parts):
     if i % 2 == 0:
       if part and not part.isspace():
-        raise TokenError('Invalid token separator:', repr(part))
+        raise PloyTokenError('Invalid token separator:', repr(part))
       continue
     if part.startswith(';'): # comment
       continue
@@ -227,7 +227,7 @@ def gen_tokens(source_text):
         yield (T_atom, True); continue
       if part[1] == 'f':
         yield (T_atom, False); continue
-      raise TokenError('Invalid token:', repr(part))
+      raise PloyTokenError('Invalid token:', repr(part))
     # else symbol
     yield (T_sym, Symbol(part))
 
@@ -246,7 +246,7 @@ def sexpr(token_stream):
   if token_type == T_sq:
     next_val = sexpr(token_stream)
     if next_val == ')':
-      raise ParseError('cannot quote closing parenthesis')
+      raise PloyParseError('cannot quote closing parenthesis')
     return Cons(S_quote, Cons(next_val))
   elif token_type == T_op:
     anchor = Cons(None)
@@ -266,7 +266,7 @@ def sexpr(token_stream):
     if sub_value == ')':
       return anchor.tl
     else:
-      raise ParseError('Expected closing parenthesis for expression:', anchor.tl, sub_value)
+      raise PloyParseError('Expected closing parenthesis for expression:', anchor.tl, sub_value)
   else:
     return value
 
@@ -432,8 +432,12 @@ def sub_eval_load_from_path(cont, env, path):
 
 # quote
 
-def eval_quote(cont, env, code):
-  'quote simply returns the quoted code as the value.'
+def eval_quote(cont, env_unused, code):
+  '''
+  quote simply returns the quoted code as the value.
+  env argument is unused; we prefer to have all the eval_x signatures the same,
+  in case we want to alter dispatch in eval_ implementation in the future.
+  '''
   assert code.hd == S_quote
   rest = code.tl
   expr = rest.hd
@@ -468,11 +472,52 @@ def eval_lambda(cont, env, code):
   def func(cont, args):
     vals = list(args)
     if not len(names) == len(vals):
-      raise CallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
+      raise PloyCallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
     bindings = dict(zip(names, args))
     call_env = Env(env, bindings)
     return sub_eval_expr_list(cont, call_env, exprs)
   return (cont, func)
+
+
+# let
+
+def Cont_let_pairs(cont, env, exprs, pair_list):
+  '''
+  recursive continuation for the evaluation of a (name, expr) let pairs.
+  pair_exprs is a ((name expr) ...) scheme list.
+  pair_list is a python list that accumulates the (name, val) pairs.
+  '''
+  pair = exprs.hd
+  rest = exprs.tl
+  sym, val_expr = pair
+  if not isinstance(sym, Symbol):
+    raise PloyTypeError('let binding requires Symbol for name; received {}; {}'.format(type(name), name))
+  name = sym.name
+  cont_next = Cont_let_pairs(cont, env, rest, pair_list) if rest else cont
+  def cont_let_pairs(value):
+    'save the value resulting from evaluating val_expr into the pair list.'
+    pair_list.append((name, value))
+    return cont_next, None
+  return Cont_eval(cont_let_pairs, env, val_expr)
+
+
+def Cont_let(cont, env, exprs, pair_list):
+  def cont_let(value):
+    bindings = dict(pair_list)
+    let_env = Env(env, bindings)
+    return sub_eval_expr_list(cont, let_env, exprs)
+  return cont_let
+
+
+def eval_let(cont, env, code):
+  assert code.hd == S_let
+  rest = code.tl
+  pair_exprs = rest.hd
+  exprs = rest.tl
+  pair_list = []
+  cont_let = Cont_let(cont, env, exprs, pair_list)
+  cont_let_pairs = Cont_let_pairs(cont_let, env, pair_exprs, pair_list)
+  return (cont_let_pairs, None)
 
 
 # if
@@ -549,37 +594,32 @@ def eval_load(cont, env, code):
 
 # apply
 
-def Cont_arg(cont, env, exprs, val_list):
+def Cont_args(cont_arg_list, env, exprs, val_list):
   '''
-  continuation for the evaluation of a function argument.
+  recursive continuation for the evaluation of function arguments.
   exprs is the chain of expressions.
   val_list is a python list that accumulates the argument values.
   '''
   expr = exprs.hd
   rest = exprs.tl
   # recursively create continuations for the remainder of the arg list evaluation.
-  next_cont = Cont_arg(cont, env, rest, val_list) if rest else cont
+  cont_next = Cont_args(cont_arg_list, env, rest, val_list) if rest else cont_arg_list
   def cont_arg(value):
-    '''
-    value is the result of the previous argument evaluation.
-    append this value to val_list and then eval the current arg.
-    note that for the first element (the operator position), the previous value is arbitary and will be ignored later.
-    '''
+    'value is the result of evaluating expr; append it to the val_list.'
     val_list.append(value)
-    return eval_(next_cont, env, expr)
-  return cont_arg
+    return cont_next, None
+  return Cont_eval(cont_arg, env, expr)
 
 
-def Cont_arg_list(cont, env, exprs):
+def Cont_arg_list(cont_apply, env, exprs):
   'continuation for the evaluation of function arguments.'
   val_list = [] # argument values accumulate here
   def cont_arg_list(value):
-    'append the last arg value and return the val list as a chain; ignore the initial garbage that preceded the first cont_arg.'
-    val_list.append(value)
-    chain = chain_from_iterable(val_list[1:])
-    return cont, chain
+    'return the val list as a chain.'
+    chain = chain_from_iterable(val_list)
+    return cont_apply, chain
   # recursively create continuations to eval each arg
-  return Cont_arg(cont_arg_list, env, exprs, val_list)
+  return Cont_args(cont_arg_list, env, exprs, val_list)
 
 
 def Cont_apply(cont):
@@ -610,6 +650,7 @@ def Cont_eval(cont, env, expr):
 
 
 def eval_(cont, env, code):
+  'evaluate code in the context of env, with cont as the following computational step.'
   if isinstance(code, Cons):
     if code.hd == S_quote:
       return eval_quote(cont, env, code)
@@ -617,6 +658,8 @@ def eval_(cont, env, code):
       return eval_begin(cont, env, code)
     if code.hd == S_lambda:
       return eval_lambda(cont, env, code)
+    if code.hd == S_let:
+      return eval_let(cont, env, code)
     if code.hd == S_if:
       return eval_if(cont, env, code)
     if code.hd == S_define:
@@ -688,7 +731,7 @@ def read_input():
       if l < 0:
         culprits = [v for t, v in tokens[i:i + 16]]
         break
-    raise ParseError('unexpected tokens:', *culprits)
+    raise PloyParseError('unexpected tokens:', *culprits)
   return tokens
 
 
