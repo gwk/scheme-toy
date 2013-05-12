@@ -83,8 +83,9 @@ class Symbol:
 
 # predefined symbols
 # S_dot is a hack for the Cons chain iterator.
-S_lambda, S_if, S_begin, S_set, S_define, S_load, S_quote, S_dot \
-= (Symbol(s) for s in ('lambda', 'if', 'begin', 'set!', 'define', 'load', 'quote', '.'))
+S_dot, S_quote, S_begin, S_lambda, S_if, S_define, S_set, S_load, \
+= (Symbol(s) for s in \
+('.', 'quote', 'begin', 'lambda', 'if', 'define', 'set!', 'load'))
 
 
 class Cons:
@@ -380,7 +381,7 @@ def add_native_fns():
 add_native_fns()
 
 
-# for now define test as a  builtin function; should be a macro
+# for now define test as a builtin function; should be a macro.
 def test(a, b):
   if a == b:
     print(a)
@@ -393,47 +394,9 @@ def test(a, b):
 add_native_fn('test', test)
 
 
-# continuation constructors
+## evaluation
 
-
-def Cont_eval(cont, env, expr):
-  'continuation for the evaluation of an expression.'
-  def cont_eval(value_ignored):
-    'value is ignored because result of eval call depends only on the environment passed in.'
-    return eval_(cont, env, expr)
-  return cont_eval
-
-
-def Cont_define(cont, env, var_name):
-  def cont_define(value):
-    env.define(var_name, value)
-    return cont, None
-  return cont_define
-
-
-def Cont_set(cont, env, var_name):
-  def cont_set(value):
-    env.set(var_name, value)
-    return cont, None
-  return cont_set
-
-
-def Cont_if(cont, env, then_code, else_code):
-  def cont_if(value):
-    return eval_(cont, env, then_code if value else else_code)
-  return cont_if
-
-
-def Cont_apply(cont):
-  def cont_apply(value):
-    '''
-    value is the evaluated operator and args list.
-    '''
-    operator = value.hd
-    args = value.tl
-    return operator(cont, args)
-  return cont_apply
-
+# expression lists; used by load, apply, and interactive loop.
 
 def Cont_expr_list(cont, env, exprs):
   'continuation for the evaluation of an expression list (function bodies, begin).'
@@ -450,9 +413,146 @@ def Cont_expr_list(cont, env, exprs):
   return cont_expr_list
 
 
+def sub_eval_expr_list(cont, env, exprs):
+  return (Cont_expr_list(cont, env, exprs), None)
+  
+
+def sub_eval_tokens(cont, env, tokens):
+  stream = iter(tokens)
+  exprs = sexprs(stream)
+  return sub_eval_expr_list(cont, env, exprs)
+
+
+def sub_eval_load_from_path(cont, env, path):
+  with open(path) as f:
+    source_text = f.read()
+  tokens = tokenize(source_text)
+  return sub_eval_tokens(cont, env, tokens)
+
+
+# quote
+
+def eval_quote(cont, env, code):
+  'quote simply returns the quoted code as the value.'
+  assert code.hd == S_quote
+  rest = code.tl
+  expr = rest.hd
+  assert rest.tl is None
+  return (cont, expr)
+
+
+# begin
+
+def eval_begin(cont, env, code):
+  'begin evaluates each argument expression and returns the value of the last.'
+  assert code.hd == S_begin
+  exprs = code.tl
+  return sub_eval_expr_list(cont, env, exprs)
+
+
+# lambda
+
+def eval_lambda(cont, env, code):
+  '''
+  lambda creates a new environment frame by binding the argument names in the first expression (a list),
+  then evaluates the remaining expressions in that environment, returning the value of the last.
+  note that environments are lexically scoped:
+  the immediate environment (argument bindings) of a function call is created at call-time,
+  but the parent environment is determined when the call to lambda (not the call to the resulting function) is made.
+  '''
+  assert code.hd == S_lambda
+  rest = code.tl
+  arg_names = rest.hd
+  exprs = rest.tl
+  names = [p.name for p in arg_names] # arg names are Symbol objects
+  def func(cont, args):
+    vals = list(args)
+    if not len(names) == len(vals):
+      raise CallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
+    bindings = dict(zip(names, args))
+    call_env = Env(env, bindings)
+    return sub_eval_expr_list(cont, call_env, exprs)
+  return (cont, func)
+
+
+# if
+
+def Cont_if(cont, env, then_code, else_code):
+  def cont_if(value):
+    return eval_(cont, env, then_code if value else else_code)
+  return cont_if
+
+
+def eval_if(cont, env, code):
+  assert code.hd == S_if
+  rest = code.tl
+  predicate = rest.hd
+  rest = rest.tl
+  then_code = rest.hd
+  rest = rest.tl
+  if rest is not None:
+    else_code = rest.hd
+    assert rest.tl is None
+  else:
+    else_code = None
+  cont_if = Cont_if(cont, env, then_code, else_code)
+  return eval_(cont_if, env, predicate)
+
+
+# define
+
+def Cont_define(cont, env, var_name):
+  def cont_define(value):
+    env.define(var_name, value)
+    return cont, None
+  return cont_define
+
+
+def eval_define(cont, env, code):
+  assert code.hd == S_define
+  rest = code.tl
+  var_name = rest.hd
+  rest = rest.tl
+  expr = rest.hd
+  assert rest.tl is None
+  define_cont = Cont_define(cont, env, str(var_name))
+  return eval_(define_cont, env, expr)
+  
+
+# set
+
+def Cont_set(cont, env, var_name):
+  def cont_set(value):
+    env.set(var_name, value)
+    return cont, None
+  return cont_set
+
+
+def eval_set(cont, env, code):
+  assert code.hd == S_set
+  rest = code.tl
+  expr = rest.hd
+  assert rest.tl is None
+  cont = Cont_set(cont, env, str(var_name))
+  return eval_(cont, env, expr)
+
+
+# load
+
+def eval_load(cont, env, code):
+  assert code.hd == S_load
+  rest = code.tl
+  path = rest.hd
+  assert rest.tl is None
+  return sub_eval_load_from_path(cont, env, path)
+
+
+# apply
+
 def Cont_arg(cont, env, exprs, val_list):
   '''
   continuation for the evaluation of a function argument.
+  exprs is the chain of expressions.
   val_list is a python list that accumulates the argument values.
   '''
   expr = exprs.hd
@@ -473,115 +573,25 @@ def Cont_arg(cont, env, exprs, val_list):
 def Cont_arg_list(cont, env, exprs):
   'continuation for the evaluation of function arguments.'
   val_list = [] # argument values accumulate here
-  def cont_arg_list_finish(value):
+  def cont_arg_list(value):
     'append the last arg value and return the val list as a chain; ignore the initial garbage that preceded the first cont_arg.'
     val_list.append(value)
     chain = chain_from_iterable(val_list[1:])
     return cont, chain
   # recursively create continuations to eval each arg
-  return Cont_arg(cont_arg_list_finish, env, exprs, val_list)
+  return Cont_arg(cont_arg_list, env, exprs, val_list)
 
 
-# evaluation helpers
+def Cont_apply(cont):
+  def cont_apply(value):
+    '''
+    value is the evaluated operator and args list.
+    '''
+    operator = value.hd
+    args = value.tl
+    return operator(cont, args)
+  return cont_apply
 
-
-def sub_eval_expr_list(cont, env, exprs):
-  return (Cont_expr_list(cont, env, exprs), None)
-  
-
-def sub_eval_tokens(cont, env, tokens):
-  stream = iter(tokens)
-  exprs = sexprs(stream)
-  return sub_eval_expr_list(cont, env, exprs)
-
-
-def sub_eval_load_from_path(cont, env, path):
-  with open(path) as f:
-    source_text = f.read()
-  tokens = tokenize(source_text)
-  return sub_eval_tokens(cont, env, tokens)
-
-
-# evaluation methods
-
-
-def eval_set(cont, env, code):
-  assert code.hd == S_set
-  rest = code.tl
-  expr = rest.hd
-  assert rest.tl is None
-  cont = Cont_set(cont, env, str(var_name))
-  return eval_(cont, env, expr)
-
-
-def eval_quote(cont, env, code):
-  assert code.hd == S_quote
-  rest = code.tl
-  expr = rest.hd
-  assert rest.tl is None
-  return (cont, expr)
-
-
-def eval_begin(cont, env, code):
-  assert code.hd == S_begin
-  exprs = code.tl
-  return sub_eval_expr_list(cont, env, exprs)
-
-
-def eval_lambda(cont, env, code):
-  '''
-  note that environments are lexically scoped:
-  the immediate environment (argument bindings) of a function call is created at call-time,
-  but the parent env is determined when the call to lambda (not the call to the resulting function) is made.
-  '''
-  assert code.hd == S_lambda
-  rest = code.tl
-  params = rest.hd
-  exprs = rest.tl
-  names = [p.name for p in params] # params are Symbol objects
-  def func(cont, args):
-    vals = list(args)
-    if not len(names) == len(vals):
-      raise CallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
-    bindings = dict(zip(names, args))
-    call_env = Env(env, bindings)
-    return sub_eval_expr_list(cont, call_env, exprs)
-  return (cont, func)
-
-
-def eval_if(cont, env, code):
-  assert code.hd == S_if
-  rest = code.tl
-  predicate = rest.hd
-  rest = rest.tl
-  then_code = rest.hd
-  rest = rest.tl
-  if rest is not None:
-    else_code = rest.hd
-    assert rest.tl is None
-  else:
-    else_code = None
-  return eval_(Cont_if(cont, env, then_code, else_code), env, predicate)
-
-
-def eval_define(cont, env, code):
-  assert code.hd == S_define
-  rest = code.tl
-  var_name = rest.hd
-  rest = rest.tl
-  expr = rest.hd
-  assert rest.tl is None
-  cont = Cont_define(cont, env, str(var_name))
-  return eval_(cont, env, expr)
-  
-
-def eval_load(cont, env, code):
-  assert code.hd == S_load
-  rest = code.tl
-  path = rest.hd
-  assert rest.tl is None
-  return sub_eval_load_from_path(cont, env, path)
-  
 
 def eval_apply(cont, env, code):
   cont_apply = Cont_apply(cont)
@@ -589,24 +599,33 @@ def eval_apply(cont, env, code):
   return (cont_args, None)
 
 
+# eval
+
+def Cont_eval(cont, env, expr):
+  'continuation for the evaluation of an expression.'
+  def cont_eval(value_ignored):
+    'value is ignored because result of eval call depends only on the environment passed in.'
+    return eval_(cont, env, expr)
+  return cont_eval
+
+
 def eval_(cont, env, code):
   if isinstance(code, Cons):
+    if code.hd == S_quote:
+      return eval_quote(cont, env, code)
+    if code.hd == S_begin:
+      return eval_begin(cont, env, code)
     if code.hd == S_lambda:
       return eval_lambda(cont, env, code)
-    elif code.hd == S_if:
+    if code.hd == S_if:
       return eval_if(cont, env, code)
-    elif code.hd == S_begin:
-      return eval_begin(cont, env, code)
-    elif code.hd == S_define:
+    if code.hd == S_define:
       return eval_define(cont, env, code)
-    elif code.hd == S_set:
+    if code.hd == S_set:
       return eval_set(cont, env, code)
-    elif code.hd == S_quote:
-      return eval_quote(cont, env, code)
-    elif code.hd == S_load:
+    if code.hd == S_load:
       return eval_load(cont, env, code)
-    else:
-      return eval_apply(cont, env, code)
+    return eval_apply(cont, env, code)
   elif isinstance(code, Symbol):
     return (cont, env.get(str(code)))
   else: # atoms evaluates to themselves
