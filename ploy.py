@@ -5,7 +5,7 @@
 '''
 Interpreter for a Scheme-like language.
 Derived from: http://thinkpython.blogspot.com/2005/02/simple-scheme-interpreter.html.
-Note that as of 2013-05-07 there is no copyright or license specification in that example.
+Note that as of 2013-05-07 there is no copyright or license specification in that source.
 
 Another source of inspiration: http://norvig.com/lispy.html 
 Further improvements could be made by following: http://norvig.com/lispy2.html
@@ -16,7 +16,7 @@ which takes a single value argument (the result of the previous step),
 and returns a (continuation, value) pair.
 The interpreter runs in a loop, repeatedly passing the value of the previous step to the current continuation.
 This allows us to implement call-with-current-continuation easily,
-and also to trace the progress of evaluation by printing out the intermediate value printed by each continuation step.
+and also to trace the progress of evaluation by printing out the intermediate value returned by each continuation step.
 '''
 
 import re
@@ -37,12 +37,13 @@ trace_enabled = False
 
 
 def error(*items):
+  'print an error and exit.'
   print(*items, file=sys.stderr)
   sys.exit(1)
 
 
 class PloyError(Exception):
-
+  'python exception class for signaling an error in the scheme interpreter.'
   def __init__(self, *items):
     self.message = ' '.join(str(i) for i in items)
     super().__init__(self, self.message)
@@ -65,6 +66,7 @@ class PloyTypeError(PloyError):
 
 
 class Symbol:
+  'scheme symbol.'
 
   __slots__ = ['name'] # slots speed things up a tad and save memory
 
@@ -82,16 +84,19 @@ class Symbol:
 
 
 # predefined symbols
-# S_dot is a hack for the Cons chain iterator.
+# S_dot is a hack for the Link chain iterator.
 S_dot, S_quote, S_begin, S_lambda, S_let, S_if, S_define, S_set, S_load, \
 = (Symbol(s) for s in \
 ('.', 'quote', 'begin', 'lambda', 'let', 'if', 'define', 'set!', 'load'))
 
 
-class Cons:
-  'cons cell.'
+class Link:
+  '''
+  scheme cons cell.
+  note that we use attributes named hd and tl instead of car and cdr.
+  '''
 
-  __slots__ = ['hd', 'tl'] # slots speed things up a tad and save memory
+  __slots__ = ('hd', 'tl') # slots speed things up a tad and save memory
   
   def __init__(self, hd, tl=None):
     self.hd = hd
@@ -99,7 +104,7 @@ class Cons:
 
   def __iter__(self):
     c = self
-    while isinstance(c, Cons):
+    while isinstance(c, Link):
       yield c.hd
       c = c.tl
     if c is not None:
@@ -107,7 +112,7 @@ class Cons:
       yield c
 
   def __eq__(self, other):
-    if not isinstance(other, Cons):
+    if not isinstance(other, Link):
       return False
     for a, b in zip(self, other):
       if a != b:
@@ -119,11 +124,11 @@ class Cons:
 
 
 def chain_from_iterable(iterable):
-  'create a chain from an iterable.'
-  anchor = Cons(None) # chain to be returned is the tail of anchor
+  'create a chain (scheme list) from an iterable.'
+  anchor = Link(None) # chain to be returned is the tail of anchor
   current = anchor
   for i in iterable:
-    c = Cons(i)
+    c = Link(i)
     current.tl = c
     current = c
   return anchor.tl
@@ -247,16 +252,16 @@ def sexpr(token_stream):
     next_val = sexpr(token_stream)
     if next_val == ')':
       raise PloyParseError('cannot quote closing parenthesis')
-    return Cons(S_quote, Cons(next_val))
+    return Link(S_quote, Link(next_val))
   elif token_type == T_op:
-    anchor = Cons(None)
+    anchor = Link(None)
     current = anchor
     sub_value = None
     while True:
       sub_value = sexpr(token_stream)
       if sub_value in (')', '.'):
         break
-      c = Cons(sub_value)
+      c = Link(sub_value)
       current.tl = c
       current = c
     # process closing token value
@@ -273,11 +278,11 @@ def sexpr(token_stream):
 
 def sexprs(token_stream):
   'parse a sequence of s-expressions from a token stream.'
-  anchor = Cons(None)
+  anchor = Link(None)
   current = anchor
   try:
     while True:
-      c = Cons(sexpr(token_stream))
+      c = Link(sexpr(token_stream))
       current.tl = c
       current = c
   except StopIteration:
@@ -332,7 +337,7 @@ def call_cc(cont, args):
     arg = args.hd
     assert args.tl is None
     return (cont, arg)
-  return func(cont, Cons(cont_func))
+  return func(cont, Link(cont_func))
 
 
 # environment for py-exec and py-eval
@@ -370,12 +375,12 @@ def add_native_fns():
   add_native_fn('not', op.not_)
   add_native_fn('eq?', op.eq)
   #add_native_fn('equal?' or 'eqv?', is_)
-  add_native_fn('cons', lambda a, b: Cons(a, b))
+  add_native_fn('cons', lambda a, b: Link(a, b))
   add_native_fn('car', lambda c: c.hd)
   add_native_fn('cdr', lambda c: c.tl)
   add_native_fn('symbol?', lambda x: isinstance(s, Symbol))
-  add_native_fn('list?', lambda x: x is None or isinstance(x, Cons))
-  add_native_fn('cons?', lambda x: isinstance(x, Cons))
+  add_native_fn('list?', lambda x: x is None or isinstance(x, Link))
+  add_native_fn('cons?', lambda x: isinstance(x, Link))
   add_native_fn('display', print)
 
 add_native_fns()
@@ -651,7 +656,7 @@ def Cont_eval(cont, env, expr):
 
 def eval_(cont, env, code):
   'evaluate code in the context of env, with cont as the following computational step.'
-  if isinstance(code, Cons):
+  if isinstance(code, Link):
     if code.hd == S_quote:
       return eval_quote(cont, env, code)
     if code.hd == S_begin:
