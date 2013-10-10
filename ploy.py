@@ -24,13 +24,14 @@ import sys
 
 from pprint import pprint
 
-
+# various unicode symbols indicating interactive interpreter status.
 rep_prompt = white_right_pointing_triangle = '▷ '
 rep_continue_prompt = ellipsis = '… '
 trace_sym = white_bullet = '◦'
 cont_sym = white_down_pointing_small_triangle = '▿'
 rep_val_sym = white_circle = '○'
 
+# flags recognized by this program.
 known_flags = { '-trace' }
 
 trace_enabled = False
@@ -66,9 +67,9 @@ class PloyTypeError(PloyError):
 
 
 class Symbol:
-  'scheme symbol.'
+  'ploy symbol.'
 
-  __slots__ = ['name'] # slots speed things up a tad and save memory
+  __slots__ = ['name'] # slots speed things up a tad and save memory.
 
   def __init__(self, name):
     self.name = name
@@ -83,7 +84,7 @@ class Symbol:
     return self.name == other.name if isinstance(other, Symbol) else False
 
 
-# predefined symbols
+# predefined symbols.
 # S_dot is a hack for the Link chain iterator.
 S_dot, S_quote, S_begin, S_lambda, S_let, S_if, S_define, S_set, S_load, \
 = (Symbol(s) for s in \
@@ -92,8 +93,8 @@ S_dot, S_quote, S_begin, S_lambda, S_let, S_if, S_define, S_set, S_load, \
 
 class Link:
   '''
-  scheme cons cell.
-  note that we use attributes named hd and tl instead of car and cdr.
+  ploy cons cell.
+  note that we use attributes named hd and tl instead of traditional lisp car and cdr.
   '''
 
   __slots__ = ('hd', 'tl') # slots speed things up a tad and save memory
@@ -135,7 +136,11 @@ def chain_from_iterable(iterable):
 
 
 class Env:
-  
+  '''
+  environment frame.
+  each frame contains a set of symbolic bindings, plus a reference to its parent frame.
+  '''
+
   __slots__ = ['parent', 'bindings']
 
   def __init__(self, parent, bindings):
@@ -175,6 +180,8 @@ class Env:
     raise PloyEnvError('cannot set unbound variable:', name)
 
   def define(self, name, value):
+    if name in self.bindings:
+      raise PloyEnvError('variable already bound:', name)
     self.bindings[name] = value
     
 
@@ -238,7 +245,7 @@ def gen_tokens(source_text):
 
 
 def tokenize(source_text):
-  'we want to do all tokenizing in a single step so that we detect any syntax errors first.'
+  'do all tokenizing in a single step in order to detect any syntax errors first.'
   return list(gen_tokens(source_text))
 
 
@@ -303,7 +310,7 @@ def native_fn(py_fn):
 
 def create_eval_fn(env):
   '''
-  create a scheme eval function using the given environment.
+  create a ploy eval function using the given environment.
   used to create the 'eval' scheme builtin.
   '''
   def eval_func(cont, args):
@@ -347,7 +354,6 @@ global_env = Env(None, {
   'py-exec' : py_exec,
   'py-eval' : py_eval,
   'call/cc' : call_cc,
-  'call-with-current-continuation' : call_cc,
 })
 
 global_env.define('eval', create_eval_fn(global_env.bindings)) # note the reference cycle
@@ -675,7 +681,7 @@ def eval_(cont, env, code):
       return eval_load(cont, env, code)
     return eval_apply(cont, env, code)
   elif isinstance(code, Symbol):
-    return (cont, env.get(str(code)))
+    return (cont, env.get(code.name))
   else: # atoms evaluates to themselves
     return (cont, code)
 
