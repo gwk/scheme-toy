@@ -17,6 +17,8 @@ and returns a (continuation, value) pair.
 The interpreter runs in a loop, repeatedly passing the value of the previous step to the current continuation.
 This allows us to implement call-with-current-continuation easily,
 and also to trace the progress of evaluation by printing out the intermediate value returned by each continuation step.
+
+This implementation is experimental, containing bugs and design flaws.
 '''
 
 import re
