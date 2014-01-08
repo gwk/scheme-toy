@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright 2013 George King.
-# Permission to use this file is granted in ploy/license.txt.
+# Permission to use this file is granted in scheme-toy/license.txt.
 
 '''
 Interpreter for a Scheme-like language.
@@ -45,31 +45,31 @@ def error(*items):
   sys.exit(1)
 
 
-class PloyError(Exception):
+class SchemeError(Exception):
   'python exception class for signaling an error in the scheme interpreter.'
   def __init__(self, *items):
     self.message = ' '.join(str(i) for i in items)
     super().__init__(self, self.message)
 
 
-class PloyTokenError(PloyError):
+class SchemeTokenError(SchemeError):
   pass
 
-class PloyParseError(PloyError):
+class SchemeParseError(SchemeError):
   pass
 
-class PloyEnvError(PloyError):
+class SchemeEnvError(SchemeError):
   pass
 
-class PloyCallError(PloyError):
+class SchemeCallError(SchemeError):
   pass
 
-class PloyTypeError(PloyError):
+class SchemeTypeError(SchemeError):
   pass
 
 
 class Symbol:
-  'ploy symbol.'
+  'scheme symbol.'
 
   __slots__ = ['name'] # slots speed things up a tad and save memory.
 
@@ -95,7 +95,7 @@ S_dot, S_quote, S_begin, S_lambda, S_let, S_if, S_define, S_set, S_load, \
 
 class Link:
   '''
-  ploy cons cell.
+  scheme cons cell.
   note that we use attributes named hd and tl instead of traditional lisp car and cdr.
   '''
 
@@ -168,7 +168,7 @@ class Env:
         e = e.parent
         continue
     self.dump()
-    raise PloyEnvError('cannot get unbound variable:', name)
+    raise SchemeEnvError('cannot get unbound variable:', name)
 
   def set(self, name, value):
     e = self
@@ -179,11 +179,11 @@ class Env:
       else:
         e = e.parent
     self.dump()
-    raise PloyEnvError('cannot set unbound variable:', name)
+    raise SchemeEnvError('cannot set unbound variable:', name)
 
   def define(self, name, value):
     if name in self.bindings:
-      raise PloyEnvError('variable already bound:', name)
+      raise SchemeEnvError('variable already bound:', name)
     self.bindings[name] = value
     
 
@@ -210,7 +210,7 @@ def gen_tokens(source_text):
   for i, part in enumerate(parts):
     if i % 2 == 0:
       if part and not part.isspace():
-        raise PloyTokenError('Invalid token separator:', repr(part))
+        raise SchemeTokenError('Invalid token separator:', repr(part))
       continue
     if part.startswith(';'): # comment
       continue
@@ -241,7 +241,7 @@ def gen_tokens(source_text):
         yield (T_atom, True); continue
       if part[1] == 'f':
         yield (T_atom, False); continue
-      raise PloyTokenError('Invalid token:', repr(part))
+      raise SchemeTokenError('Invalid token:', repr(part))
     # else symbol
     yield (T_sym, Symbol(part))
 
@@ -260,7 +260,7 @@ def sexpr(token_stream):
   if token_type == T_sq:
     next_val = sexpr(token_stream)
     if next_val == ')':
-      raise PloyParseError('cannot quote closing parenthesis')
+      raise SchemeParseError('cannot quote closing parenthesis')
     return Link(S_quote, Link(next_val))
   elif token_type == T_op:
     anchor = Link(None)
@@ -280,7 +280,7 @@ def sexpr(token_stream):
     if sub_value == ')':
       return anchor.tl
     else:
-      raise PloyParseError('Expected closing parenthesis for expression:', anchor.tl, sub_value)
+      raise SchemeParseError('Expected closing parenthesis for expression:', anchor.tl, sub_value)
   else:
     return value
 
@@ -312,7 +312,7 @@ def native_fn(py_fn):
 
 def create_eval_fn(env):
   '''
-  create a ploy eval function using the given environment.
+  create a scheme eval function using the given environment.
   used to create the 'eval' scheme builtin.
   '''
   def eval_func(cont, args):
@@ -485,7 +485,7 @@ def eval_lambda(cont, env, code):
   def func(cont, args):
     vals = list(args)
     if not len(names) == len(vals):
-      raise PloyCallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
+      raise SchemeCallError('expected {} arguments; received {}; names: {}'.format(len(names), len(vals), ', '.join(names)))
     bindings = dict(zip(names, args))
     call_env = Env(env, bindings)
     return sub_eval_expr_list(cont, call_env, exprs)
@@ -504,7 +504,7 @@ def Cont_let_pairs(cont, env, exprs, pair_list):
   rest = exprs.tl
   sym, val_expr = pair
   if not isinstance(sym, Symbol):
-    raise PloyTypeError('let binding requires Symbol for name; received {}; {}'.format(type(name), name))
+    raise SchemeTypeError('let binding requires Symbol for name; received {}; {}'.format(type(name), name))
   name = sym.name
   cont_next = Cont_let_pairs(cont, env, rest, pair_list) if rest else cont
   def cont_let_pairs(value):
@@ -707,7 +707,7 @@ def eval_loop(cont):
     return value
   except KeyboardInterrupt:
     print(' Interrupt')
-  except PloyError as e:
+  except SchemeError as e:
     print()
     print('error:', e.message)
   return None
@@ -744,7 +744,7 @@ def read_input():
       if l < 0:
         culprits = [v for t, v in tokens[i:i + 16]]
         break
-    raise PloyParseError('unexpected tokens:', *culprits)
+    raise SchemeParseError('unexpected tokens:', *culprits)
   return tokens
 
 
@@ -765,7 +765,7 @@ def rep_loop():
     # error handling in eval_loop is duplicated here to catch errors in sub_eval_tokens
     except KeyboardInterrupt:
       print(' Interrupt')
-    except PloyError as e:
+    except SchemeError as e:
       print()
       print('error:', e.message)
 
